@@ -1,0 +1,33 @@
+# Python bytecode and cache
+__pycache__/
+*.py[cod]
+*.so
+
+# Virtual environments
+venv/
+venv-*/
+.venv/
+
+# Notebook checkpoints
+.ipynb_checkpoints/
+
+# Generated benchmark outputs
+reports/
+
+# Test and tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Project data downloads and intermediates
+spe11b/
+data/raw/
+data/processed/
+data/splits/
+
+# OS/editor files
+.DS_Store
+.idea/
+.vscode/
