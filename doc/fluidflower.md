@@ -43,6 +43,7 @@ room‑temperature conditions. The systems model CO₂ storage in
 sand‑layered porous media, cf. Fig 1.
 
 ![](img/image1.png)
+
 Fig 1. Repeated CO2 storage experiments in 1m scale FluidFlower rigs
 using the same protocol (yet using different pH indicators for
 visualization).
@@ -59,6 +60,7 @@ in context with previous study on physical variability (Haugen et al.,
 2024).
 
 ![](img/image2.png)![](img/image3.png)
+
 Fig 1. Two FluidFlower geometries with same sand types for laboratory
 CO2 storage.
 
