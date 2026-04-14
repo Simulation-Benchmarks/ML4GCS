@@ -26,9 +26,7 @@ equations. This controlled configuration establishes a consistent
 reference framework for evaluating history‑matching and
 surrogate‑modeling approaches.
 
-![](img/image4.png){width="5.896655730533683in"
-height="1.531463254593176in"}
-
+![](img/image4.png)
 Fig 3. Geometry of SPE11B.
 
 While the simulation outputs are synthetic, multiple realizations are
@@ -41,8 +39,7 @@ pressure, saturation, and CO₂ mass etc. This ensemble of solutions
 constitutes the data provided for the benchmark; notably, no definitive
 ground truth is assumed to exist, cf. Fig 4.
 
-![](img/image5.png){width="6.3in" height="2.9326924759405073in"}
-
+![](img/image5.png)
 Fig 4. Four of 34 simulation dense data outputs: CO2 mass after 1000
 years.
 
@@ -83,9 +80,7 @@ additionally analyzed using hierarchical clustering, allowing
 machine‑learning surrogates to be placed within the broader spectrum of
 physical simulation outcomes, cf. Fig 5.
 
-![](img/image6.png){width="3.0921161417322836in"
-height="2.6625087489063866in"}
-
+![](img/image6.png)
 Fig 5. Hierarchical clustering of 34 submissions.
 
 **References**
