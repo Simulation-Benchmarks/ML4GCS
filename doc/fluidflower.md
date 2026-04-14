@@ -42,8 +42,7 @@ et al., 2025) and consist of meter‑scale geometries under controlled,
 room‑temperature conditions. The systems model CO₂ storage in
 sand‑layered porous media, cf. Fig 1.
 
-![](img/image1.png){width="6.3in" height="1.9930555555555556in"}
-
+![](img/image1.png)
 Fig 1. Repeated CO2 storage experiments in 1m scale FluidFlower rigs
 using the same protocol (yet using different pH indicators for
 visualization).
@@ -59,10 +58,7 @@ encountered in real field data. The respective data has been collected
 in context with previous study on physical variability (Haugen et al.,
 2024).
 
-![](img/image2.png){width="2.977635608048994in"
-height="1.8668372703412073in"}![](img/image3.png){width="2.8640463692038494in"
-height="1.89459208223972in"}
-
+![](img/image2.png)![](img/image3.png)
 Fig 1. Two FluidFlower geometries with same sand types for laboratory
 CO2 storage.
 
