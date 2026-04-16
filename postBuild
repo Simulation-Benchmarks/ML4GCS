@@ -1,0 +1,6 @@
+#!/bin/bash
+
+touch output.txt
+pwd >>output.txt
+echo $HOME >>output.txt
+ls -l >>output.txt
