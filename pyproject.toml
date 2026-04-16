@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ML4GCS"
+version = "0.1.0"
+description = "ML4GCS benchmark"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = ["darsia"]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+darsia = { path = "external/darsia", editable = true }

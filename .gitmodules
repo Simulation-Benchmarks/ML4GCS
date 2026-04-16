@@ -1,0 +1,3 @@
+[submodule "external/darsia"]
+	path = external/darsia
+	url = https://github.com/pmgbergen/darsia
