@@ -1,6 +1,4 @@
 #!/bin/bash
 
-touch output.txt
-pwd >>output.txt
-echo $HOME >>output.txt
-ls -l >>output.txt
+mkdir ML4GCS
+mv configs  doc  LICENSES  notebooks  postBuild  README.md  requirements.txt  scripts  src .git ML4GCS/.
