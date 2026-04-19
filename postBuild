@@ -5,3 +5,6 @@ mv configs  doc  LICENSES  notebooks  postBuild  README.md  requirements.txt  sc
 
 git clone https://github.com/Simulation-Benchmarks/11thSPE-CSP.git
 git clone https://github.com/pmgbergen/DarSIA.git
+cd DarSIA
+pip install .
+cd ..
