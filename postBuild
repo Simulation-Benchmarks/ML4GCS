@@ -4,6 +4,9 @@ mkdir ML4GCS
 mv configs  doc  LICENSES  notebooks  postBuild  README.md  requirements.txt  scripts  src .git ML4GCS/.
 
 git clone https://github.com/Simulation-Benchmarks/11thSPE-CSP.git
+cd 11thSPE-CSP
+pip install .
+cd ..
 git clone https://github.com/pmgbergen/DarSIA.git
 cd DarSIA
 pip install .
