@@ -50,19 +50,22 @@ def save_spatial_map_csv(
 def save_spatial_map_csv_data(
     template: SpatialMapSnapshot,
     output_path: Path | str,
-    data: np.ndarray,
+    data: np.ndarray | None = None,
 ) -> Path:
     """Write a spatial-map CSV using a full row matrix."""
 
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    data = np.asarray(data, dtype=template.data.dtype)
-    if data.shape != template.data.shape:
-        raise ValueError(
-            "Predicted data shape does not match the template shape: "
-            f"{data.shape} vs {template.data.shape}"
-        )
+    if data is None:
+        data = template.data.copy()
+    else:
+        data = np.asarray(data, dtype=template.data.dtype)
+        if data.shape != template.data.shape:
+            raise ValueError(
+                "Predicted data shape does not match the template shape: "
+                f"{data.shape} vs {template.data.shape}"
+            )
 
     with output_path.open("w", encoding="utf-8", newline="") as handle:
         handle.write("# " + ", ".join(template.columns) + "\n")
@@ -109,6 +112,12 @@ def export_next_step_timeline(
     output_paths: list[Path] = []
     snapshots = participant_series.snapshots
 
+    if snapshots:
+        first_snapshot = snapshots[0]
+        output_paths.append(
+            save_spatial_map_csv_data(first_snapshot, output_root / first_snapshot.path.name)
+        )
+
     for input_snapshot, target_snapshot in zip(snapshots[:-1], snapshots[1:], strict=True):
         pressure_grid = predict_pressure(input_snapshot, target_snapshot)
         output_path = output_root / target_snapshot.path.name
@@ -127,6 +136,10 @@ def export_next_step_timeline_data(
     output_root = Path(output_root) / participant_series.participant
     output_paths: list[Path] = []
     snapshots = participant_series.snapshots
+
+    if snapshots:
+        first_snapshot = snapshots[0]
+        output_paths.append(save_spatial_map_csv_data(first_snapshot, output_root / first_snapshot.path.name))
 
     for input_snapshot, target_snapshot in zip(snapshots[:-1], snapshots[1:], strict=True):
         predicted = predict_data(input_snapshot, target_snapshot)
