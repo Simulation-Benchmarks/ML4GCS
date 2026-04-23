@@ -93,5 +93,42 @@ def get_result_name_and_year(column_index):
     else:
         raise IndexError(f"Column index {column_index} is out of range. Valid range: 0 to {len(metadata)-1}")
 
+
+def load_array_from_npz(npz_path: str = 'spe11b_tmco2_dt50y.npz', array_key: str = 'global_array') -> np.ndarray:
+    """Load the global array stored in a .npz archive."""
+    if not os.path.exists(npz_path):
+        raise FileNotFoundError(f"Archive not found: {npz_path}")
+    with np.load(npz_path) as archive:
+        if array_key not in archive:
+            raise KeyError(f"Array key '{array_key}' not found in {npz_path}")
+        return archive[array_key]
+
+
+def get_spatial_maps(column_index1: int, column_index2: int, npz_path: str = 'spe11b_tmco2_dt50y.npz') -> tuple[np.ndarray, np.ndarray]:
+    """Return two columns from the global array as 120x840 images.
+
+    The first 840 entries of each column form the first row of the image,
+    the next 840 entries form the second row, and so on.
+    """
+    global_array = load_array_from_npz(npz_path)
+    n_rows = 120
+    n_cols = 840
+    expected_length = n_rows * n_cols
+
+    if global_array.ndim != 2:
+        raise ValueError(f"Expected a 2D array, got shape {global_array.shape}")
+    if global_array.shape[0] < expected_length:
+        raise ValueError(
+            f"Array has too few rows ({global_array.shape[0]}); expected at least {expected_length} to reshape into {n_rows}x{n_cols}."
+        )
+    for idx in (column_index1, column_index2):
+        if idx < 0 or idx >= global_array.shape[1]:
+            raise IndexError(f"Column index {idx} is out of range. Valid range: 0 to {global_array.shape[1] - 1}")
+
+    image1 = global_array[:expected_length, column_index1].reshape((n_rows, n_cols))
+    image2 = global_array[:expected_length, column_index2].reshape((n_rows, n_cols))
+    return image1, image2
+
+
 if __name__ == "__main__":
     main()
