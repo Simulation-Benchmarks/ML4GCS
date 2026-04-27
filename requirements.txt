@@ -9,3 +9,4 @@ torch
 jax
 tensorflow
 pandas
+optax

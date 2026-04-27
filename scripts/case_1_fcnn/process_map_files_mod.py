@@ -44,15 +44,6 @@ def main():
 
             column_data = df[col_name].values
 
-            # try:
-            #     np.any(np.isnan(np.array(column_data)))
-            #     st()
-            # except:
-            #     st()
-            st()
-            if np.any(np.isnan(np.array(column_data))):
-                st()
-
             data_list.append(column_data)
 
             # Parse metadata
@@ -168,12 +159,8 @@ def get_maps_and_distance(
         raise ValueError(f"year1 = {year1} and year2 = {year2} have to coincide.")
 
     base_dir = pathlib.Path(__file__).resolve().parent
-    filename = (
-        base_dir
-        / f"../../../shared_folder/evaluation/spe11b/dense/spe11b_co2mass_w1_diff_{year1}y.csv"
-    )
+    filename = base_dir / f"./dense/spe11b_co2mass_w1_diff_{year1}y.csv"
     distances = pd.read_csv(filename, index_col=0)
-
     try:
         row = distances.loc[name1]
     except KeyError:
