@@ -7,7 +7,7 @@ from fnmatch import fnmatch
 def main():
     base_dir = 'spe11b'
     map_file = 'map_files.txt'
-    metadata_path = 'metadata.json'
+    metadata_path = 'spe11b_metadata.json'
     npz_path = 'spe11b_tmco2.npz'
     
     # Read the list of files
@@ -70,7 +70,7 @@ def main():
     print(f"Processed {len(data_list)} files. Global array shape: {global_array.shape}")
     print(f"Saved to {npz_path} and {metadata_path}")
 
-def get_result_name_and_year(column_index: int, metadata_path: str = 'metadata.json'):
+def get_result_name_and_year(column_index: int, metadata_path: str = 'spe11b_metadata.json'):
     """
     Given a column index in the global array, return the result name (folder) and year.
     
@@ -132,14 +132,9 @@ def get_spatial_maps(column_index1: int, column_index2: int, npz_path: str = 'sp
     image2 = global_array[:expected_length, column_index2].reshape((n_rows, n_cols))
     return image1, image2
 
-def get_maps_and_distance(column_index1: int, column_index2: int, npz_path: str = 'spe11b_tmco2.npz') -> tuple[np.ndarray, np.ndarray, float]:
-    name1, year1 = get_result_name_and_year(column_index1)
-    name2, year2 = get_result_name_and_year(column_index2)
 
-    if year1 != year2:
-        raise ValueError(f"year1 = {year1} and year2 = {year2} have to coincide.")
-
-    filename = f"/home/jovyan/shared_folder/evaluation/spe11b/dense/spe11b_co2mass_w1_diff_{year1}y.csv"
+def get_distance(year: int, name1: str, name2: str) -> float:
+    filename = f"/home/jovyan/shared_folder/evaluation/spe11b/dense/spe11b_co2mass_w1_diff_{year}y.csv"
     distances = pd.read_csv(filename, index_col=0)
 
     try:
@@ -169,10 +164,49 @@ def get_maps_and_distance(column_index1: int, column_index2: int, npz_path: str 
                 raise
         else:
             raise
+    return distance
 
+
+def get_maps_and_distance(column_index1: int, column_index2: int, npz_path: str = 'spe11b_tmco2.npz', metadata_path: str = 'spe11b_metadata.json') -> tuple[np.ndarray, np.ndarray, float]:
     image1, image2 = get_spatial_maps(column_index1, column_index2, npz_path)
 
+    name1, year1 = get_result_name_and_year(column_index1, metadata_path)
+    name2, year2 = get_result_name_and_year(column_index2, metadata_path)
+
+    if year1 != year2:
+        raise ValueError(f"year1 = {year1} and year2 = {year2} have to coincide.")
+
+    distance = get_distance(year1, name1, name2)
+
     return image1, image2, distance
-    
+
+def get_all_distances(
+    metadata_path: str = 'spe11b_metadata.json',
+    distance_npz_path: str = 'spe11b_distances.npz',
+) -> None:
+    with open(metadata_path, 'r', encoding='utf-8') as f:
+        metadata = json.load(f)
+
+    pairs = []
+    values = []
+    for i in range(len(metadata)):
+        for j in range(i + 1, len(metadata)):
+            name1, year1 = metadata[i]
+            name2, year2 = metadata[j]
+
+            if year1 != year2:
+                continue
+
+            try:
+                distance = get_distance(year1, name1, name2)
+                pairs.append((i, j))
+                values.append(distance)
+            except KeyError:
+                print(f"Warning: Distance not found for {name1} and {name2} in year {year1}, skipping.")
+                continue
+
+    np.savez_compressed(distance_npz_path, pairs=np.array(pairs, dtype=int), distances=np.array(values, dtype=float))
+
+
 if __name__ == "__main__":
     main()
