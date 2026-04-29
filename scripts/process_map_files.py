@@ -1,13 +1,13 @@
+import json
 import numpy as np
 import pandas as pd
 import os
-import pickle
 from fnmatch import fnmatch
 
 def main():
     base_dir = 'spe11b'
     map_file = 'map_files.txt'
-    pkl_path = 'metadata.pkl'
+    metadata_path = 'metadata.json'
     npz_path = 'spe11b_tmco2.npz'
     
     # Read the list of files
@@ -32,7 +32,7 @@ def main():
         
         try:
             df = pd.read_csv(full_path)
-            col_name = 'tmCO2 [kg]'
+            col_name = ' tmCO2 [kg]'
             if col_name not in df.columns:
                 print(f"Warning: Column '{col_name}' not found in {full_path}, skipping")
                 continue
@@ -62,14 +62,14 @@ def main():
     # Save the array in compressed format
     np.savez_compressed(npz_path, global_array=global_array)
     
-    # Save metadata
-    with open(pkl_path, 'wb') as f:
-        pickle.dump(metadata, f)
+    # Save metadata as JSON
+    with open(metadata_path, 'w', encoding='utf-8') as f:
+        json.dump(metadata, f, indent=2)
     
     print(f"Processed {len(data_list)} files. Global array shape: {global_array.shape}")
-    print(f"Saved to {npz_path} and {pkl_path}")
+    print(f"Saved to {npz_path} and {metadata_path}")
 
-def get_result_name_and_year(column_index: int, pkl_path: str = 'metadata.pkl'):
+def get_result_name_and_year(column_index: int, metadata_path: str = 'metadata.json'):
     """
     Given a column index in the global array, return the result name (folder) and year.
     
@@ -82,16 +82,16 @@ def get_result_name_and_year(column_index: int, pkl_path: str = 'metadata.pkl'):
     
     Raises:
         IndexError: If column_index is out of range.
-        FileNotFoundError: If pkl_path is not found.
+        FileNotFoundError: If metadata_path is not found.
     """
     try:
-        with open(pkl_path, 'rb') as f:
-            metadata = pickle.load(f)
+        with open(metadata_path, 'r', encoding='utf-8') as f:
+            metadata = json.load(f)
     except FileNotFoundError:
-        raise FileNotFoundError(f"{pkl_path} not found. Run the main function first to generate it.")
+        raise FileNotFoundError(f"{metadata_path} not found. Run the main function first to generate it.")
     
     if 0 <= column_index < len(metadata):
-        return metadata[column_index]
+        return tuple(metadata[column_index])
     else:
         raise IndexError(f"Column index {column_index} is out of range. Valid range: 0 to {len(metadata)-1}")
 
