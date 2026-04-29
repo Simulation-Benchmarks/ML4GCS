@@ -128,8 +128,8 @@ def get_spatial_maps(column_index1: int, column_index2: int, npz_path: str = 'sp
         if idx < 0 or idx >= global_array.shape[1]:
             raise IndexError(f"Column index {idx} is out of range. Valid range: 0 to {global_array.shape[1] - 1}")
 
-    image1 = global_array[:expected_length, column_index1].reshape((n_rows, n_cols))
-    image2 = global_array[:expected_length, column_index2].reshape((n_rows, n_cols))
+    image1 = global_array[:expected_length, column_index1].astype(float).reshape((n_rows, n_cols))
+    image2 = global_array[:expected_length, column_index2].astype(float).reshape((n_rows, n_cols))
     return image1, image2
 
 
