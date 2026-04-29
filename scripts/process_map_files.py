@@ -38,6 +38,7 @@ def main():
                 continue
             
             column_data = df[col_name].values
+            column_data = np.nan_to_num(column_data, nan=0.0)
             data_list.append(column_data)
             
             # Parse metadata
