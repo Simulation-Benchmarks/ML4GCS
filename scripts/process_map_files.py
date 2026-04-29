@@ -194,7 +194,7 @@ def get_all_distances(
             name1, year1 = metadata[i]
             name2, year2 = metadata[j]
 
-            if year1 != year2:
+            if year1 != year2 or year1 < 1:
                 continue
 
             try:
