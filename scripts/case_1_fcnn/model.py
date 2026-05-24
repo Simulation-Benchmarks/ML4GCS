@@ -1,5 +1,6 @@
+from pdb import set_trace as st
 import jax.numpy as jnp
-from jax import random
+from jax import nn, random
 from typing import List
 
 
@@ -20,17 +21,18 @@ def initialize_model(layer_widths: List[int]) -> dict[str, dict[str, jnp.ndarray
 
     for i, (fan_in, fan_out) in enumerate(zip(layer_widths[:-1], layer_widths[1:])):
         key, w_key = random.split(key)
-
         std = jnp.sqrt(2.0 / fan_in)
-        W = random.normal(w_key, shape=(fan_in, fan_out)) * std
-        b = jnp.zeros((fan_out,))
+        W = random.normal(w_key, shape=(fan_in, fan_out), dtype=jnp.float32) * std
+        b = jnp.zeros((fan_out,), dtype=jnp.float32)
 
         params[f"layer_{i}"] = {"W": W, "b": b}
 
     return params
 
-def activation():
-    
+
+def activation(x: jnp.ndarray) -> jnp.ndarray:
+    return nn.relu(x)
+
 
 def forward(
     params: dict[str, dict[str, jnp.ndarray]],
@@ -48,9 +50,18 @@ def forward(
     Returns:
         Output array of shape (batch_size, output_dim) or (output_dim,).
     """
-    for layer in params:
+    layers = [
+        params[name]
+        for name in sorted(params, key=lambda name: int(name.split("_")[1]))
+    ]
+    input_dim = layers[0]["W"].shape[0]
+    if x.ndim != 1:
+        x = jnp.reshape(x, (-1, input_dim))
+
+    for layer in layers[:-1]:
         x = activation(x @ layer["W"] + layer["b"])
 
+    last_layer = layers[-1]
     x = x @ last_layer["W"] + last_layer["b"]
 
     return x
