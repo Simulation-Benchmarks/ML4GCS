@@ -1,17 +1,18 @@
-from pdb import set_trace as st
+import os
+import json
 import numpy as np
 import pandas as pd
-import os
-import pickle
 import pathlib
 from fnmatch import fnmatch
 
 
 def main():
-    base_dir = pathlib.Path(__file__).resolve().parent / "../spe11b"
-    # TODO: fix paths
-
+    # base_dir = 'spe11b'
+    base_dir = pathlib.Path(__file__).resolve().parent / "../../spe11b"
     map_file = "map_files.txt"
+    metadata_path = "spe11b_metadata.json"
+    npz_path = "spe11b_tmco2.npz"
+
     # Read the list of files
     with open(map_file, "r") as f:
         files = [line.strip() for line in f if line.strip()]
@@ -43,7 +44,7 @@ def main():
                 continue
 
             column_data = df[col_name].values
-
+            column_data = np.nan_to_num(column_data, nan=0.0)
             data_list.append(column_data)
 
             # Parse metadata
@@ -66,17 +67,19 @@ def main():
     global_array = np.column_stack(data_list)
 
     # Save the array in compressed format
-    np.savez_compressed("spe11b_tmco2.npz", global_array=global_array)
+    np.savez_compressed(npz_path, global_array=global_array)
 
-    # Save metadata
-    with open("metadata.pkl", "wb") as f:
-        pickle.dump(metadata, f)
+    # Save metadata as JSON
+    with open(metadata_path, "w", encoding="utf-8") as f:
+        json.dump(metadata, f, indent=2)
 
     print(f"Processed {len(data_list)} files. Global array shape: {global_array.shape}")
-    print("Saved to 'spe11b_tmco2.npz' and 'metadata.pkl'")
+    print(f"Saved to {npz_path} and {metadata_path}")
 
 
-def get_result_name_and_year(column_index):
+def get_result_name_and_year(
+    column_index: int, metadata_path: str = "spe11b_metadata.json"
+):
     """
     Given a column index in the global array, return the result name (folder) and year.
 
@@ -89,18 +92,18 @@ def get_result_name_and_year(column_index):
 
     Raises:
         IndexError: If column_index is out of range.
-        FileNotFoundError: If metadata.pkl is not found.
+        FileNotFoundError: If metadata_path is not found.
     """
     try:
-        with open("metadata.pkl", "rb") as f:
-            metadata = pickle.load(f)
+        with open(metadata_path, "r", encoding="utf-8") as f:
+            metadata = json.load(f)
     except FileNotFoundError:
         raise FileNotFoundError(
-            "metadata.pkl not found. Run the main function first to generate it."
+            f"{metadata_path} not found. Run the main function first to generate it."
         )
 
     if 0 <= column_index < len(metadata):
-        return metadata[column_index]
+        return tuple(metadata[column_index])
     else:
         raise IndexError(
             f"Column index {column_index} is out of range. Valid range: 0 to {len(metadata)-1}"
@@ -108,7 +111,7 @@ def get_result_name_and_year(column_index):
 
 
 def load_array_from_npz(
-    npz_path: str = "spe11b_tmco2_dt50y.npz", array_key: str = "global_array"
+    npz_path: str = "spe11b_tmco2.npz", array_key: str = "global_array"
 ) -> np.ndarray:
     """Load the global array stored in a .npz archive."""
     if not os.path.exists(npz_path):
@@ -120,7 +123,7 @@ def load_array_from_npz(
 
 
 def get_spatial_maps(
-    column_index1: int, column_index2: int, npz_path: str = "spe11b_tmco2_dt50y.npz"
+    column_index1: int, column_index2: int, npz_path: str = "spe11b_tmco2.npz"
 ) -> tuple[np.ndarray, np.ndarray]:
     """Return two columns from the global array as 120x840 images.
 
@@ -144,23 +147,23 @@ def get_spatial_maps(
                 f"Column index {idx} is out of range. Valid range: 0 to {global_array.shape[1] - 1}"
             )
 
-    image1 = global_array[:expected_length, column_index1].reshape((n_rows, n_cols))
-    image2 = global_array[:expected_length, column_index2].reshape((n_rows, n_cols))
+    image1 = (
+        global_array[:expected_length, column_index1]
+        .astype(float)
+        .reshape((n_rows, n_cols))
+    )
+    image2 = (
+        global_array[:expected_length, column_index2]
+        .astype(float)
+        .reshape((n_rows, n_cols))
+    )
     return image1, image2
 
 
-def get_maps_and_distance(
-    column_index1: int, column_index2: int, npz_path: str = "spe11b_tmco2_dt50y.npz"
-) -> tuple[np.ndarray, np.ndarray, float]:
-    name1, year1 = get_result_name_and_year(column_index1)
-    name2, year2 = get_result_name_and_year(column_index2)
-
-    if year1 != year2:
-        raise ValueError(f"year1 = {year1} and year2 = {year2} have to coincide.")
-
-    base_dir = pathlib.Path(__file__).resolve().parent
-    filename = base_dir / f"./dense/spe11b_co2mass_w1_diff_{year1}y.csv"
+def get_distance(year: int, name1: str, name2: str) -> float:
+    filename = f"/home/jovyan/shared_folder/evaluation/spe11b/dense/spe11b_co2mass_w1_diff_{year}y.csv"
     distances = pd.read_csv(filename, index_col=0)
+
     try:
         row = distances.loc[name1]
     except KeyError:
@@ -188,10 +191,60 @@ def get_maps_and_distance(
                 raise
         else:
             raise
+    return distance
 
+
+def get_maps_and_distance(
+    column_index1: int,
+    column_index2: int,
+    npz_path: str = "spe11b_tmco2.npz",
+    metadata_path: str = "spe11b_metadata.json",
+) -> tuple[np.ndarray, np.ndarray, float]:
     image1, image2 = get_spatial_maps(column_index1, column_index2, npz_path)
 
+    name1, year1 = get_result_name_and_year(column_index1, metadata_path)
+    name2, year2 = get_result_name_and_year(column_index2, metadata_path)
+
+    if year1 != year2:
+        raise ValueError(f"year1 = {year1} and year2 = {year2} have to coincide.")
+
+    distance = get_distance(year1, name1, name2)
+
     return image1, image2, distance
+
+
+def get_all_distances(
+    metadata_path: str = "spe11b_metadata.json",
+    distance_npz_path: str = "spe11b_distances.npz",
+) -> None:
+    with open(metadata_path, "r", encoding="utf-8") as f:
+        metadata = json.load(f)
+
+    pairs = []
+    values = []
+    for i in range(len(metadata)):
+        for j in range(i + 1, len(metadata)):
+            name1, year1 = metadata[i]
+            name2, year2 = metadata[j]
+
+            if year1 != year2 or year1 < 1:
+                continue
+
+            try:
+                distance = get_distance(year1, name1, name2)
+                pairs.append((i, j))
+                values.append(distance)
+            except KeyError:
+                print(
+                    f"Warning: Distance not found for {name1} and {name2} in year {year1}, skipping."
+                )
+                continue
+
+    np.savez_compressed(
+        distance_npz_path,
+        pairs=np.array(pairs, dtype=int),
+        distances=np.array(values, dtype=float),
+    )
 
 
 if __name__ == "__main__":
