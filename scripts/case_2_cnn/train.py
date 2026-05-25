@@ -24,7 +24,7 @@ def train_model(
     test_spacing=100,
 ):
     """
-    Train a fully connected neural network with optax Adam.
+    Train a convolutional neural network with optax Adam.
 
     Args:
         params: Initial model parameters.

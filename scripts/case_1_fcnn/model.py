@@ -3,21 +3,27 @@ import jax.numpy as jnp
 from jax import nn, random
 from typing import List
 
+DEFAULT_SEED = 0
 
-def initialize_model(layer_widths: List[int]) -> dict[str, dict[str, jnp.ndarray]]:
+
+def initialize_model(
+    layer_widths: List[int], seed: int = DEFAULT_SEED
+) -> dict[str, dict[str, jnp.ndarray]]:
     """
     Initialize parameters of a fully connected neural network.
+    From "Delving Deep into Rectifiers: Surpassing Human-Level Performance on ImageNet Classification" 10.1109/iccv.2015.123
 
     Args:
         layer_widths: List of integers defining the width of each layer,
                       e.g. [784, 128, 64, 10] creates a 3-layer network.
+        seed: Random seed used for deterministic parameter initialization.
 
     Returns:
         Nested dict of the form {"layer_0": {"W": ..., "b": ...}, ...},
         compatible with jax.tree_util, jax.grad, and optax optimizers.
     """
     params = {}
-    key = random.PRNGKey(0)
+    key = random.PRNGKey(seed)
 
     for i, (fan_in, fan_out) in enumerate(zip(layer_widths[:-1], layer_widths[1:])):
         key, w_key = random.split(key)
@@ -31,7 +37,7 @@ def initialize_model(layer_widths: List[int]) -> dict[str, dict[str, jnp.ndarray
 
 
 def activation(x: jnp.ndarray) -> jnp.ndarray:
-    return nn.relu(x)
+    return nn.silu(x)
 
 
 def forward(
@@ -44,24 +50,20 @@ def forward(
     Args:
         params: Nested param dict from initialize_model().
         x: Input array of shape (batch_size, input_dim) or (input_dim,).
-        activation: Hidden layer activation function (default: ReLU).
-                    The final layer is always linear (no activation).
 
     Returns:
         Output array of shape (batch_size, output_dim) or (output_dim,).
     """
-    layers = [
-        params[name]
-        for name in sorted(params, key=lambda name: int(name.split("_")[1]))
-    ]
-    input_dim = layers[0]["W"].shape[0]
+    num_layers = len(params)
+    input_dim = params["layer_0"]["W"].shape[0]
     if x.ndim != 1:
         x = jnp.reshape(x, (-1, input_dim))
 
-    for layer in layers[:-1]:
+    for i in range(num_layers - 1):
+        layer = params[f"layer_{i}"]
         x = activation(x @ layer["W"] + layer["b"])
 
-    last_layer = layers[-1]
+    last_layer = params[f"layer_{num_layers - 1}"]
     x = x @ last_layer["W"] + last_layer["b"]
 
     return x

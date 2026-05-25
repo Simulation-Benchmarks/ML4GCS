@@ -23,21 +23,27 @@ if __name__ == "__main__":
         x_test,
         y_test,
     ) = utils_datasets.create_datasets(
-        total_number_images=100,
+        total_number_images=60,
         step=1,
         start=35,
         data_path=base_dir / "spe11b_tmco2_dt50y.npz",
         scale_range=(0, 1),
     )
 
-    input_dim = int(np.prod(x_train.shape[1:]))
-    layer_widths = [input_dim, 64, 64, 1]
     seed = 0
-    params = model.initialize_model(layer_widths, seed=seed)
+    params = model.initialize_model(
+        input_channels=int(x_train.shape[1]),
+        conv_channels=(4, 8),
+        kernel_size=(5, 5),
+        conv_strides=(2, 2),
+        dense_width=16,
+        output_dim=1,
+        seed=seed,
+    )
 
     # train using Adam
     lr = 1e-2
-    epochs_tot = 10000
+    epochs_tot = 200
     optimizer = optax.adam(lr)
 
     params_opt, loss_epochs, loss_train, loss_validation = train.train_model(
