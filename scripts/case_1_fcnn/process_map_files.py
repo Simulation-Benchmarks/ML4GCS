@@ -6,11 +6,17 @@ import pathlib
 import pickle
 import shutil
 from fnmatch import fnmatch
+from typing import Optional
 
 
 def main():
     script_dir = pathlib.Path(__file__).resolve().parent
-    base_dir = script_dir / "../../spe11b"
+
+    base_dirs = [
+        script_dir / "../../spe11b",
+        script_dir / "../../../shared_folder/data/spe11b",
+    ]
+
     map_file = script_dir / "map_files.txt"
     metadata_path = script_dir / "spe11b_metadata_dt50y.json"
     metadata_pickle_path = script_dir / "metadata.pkl"
@@ -34,6 +40,14 @@ def main():
     split_paths = []
     split_metadata_paths = []
     col_name = " tmCO2 [kg]"
+
+    def resolve_map_file(file_path: str) -> Optional[pathlib.Path]:
+        relative_path = pathlib.Path(file_path.lstrip("./"))
+        for base_dir in base_dirs:
+            full_path = base_dir / relative_path
+            if full_path.exists():
+                return full_path
+        return None
 
     if split_dir.exists():
         shutil.rmtree(split_dir)
@@ -62,13 +76,19 @@ def main():
 
     split_index = 0
     for file_path in matching_files:
-        full_path = os.path.join(base_dir, file_path.lstrip("./"))
-        if not os.path.exists(full_path):
-            print(f"Warning: File {full_path} does not exist, skipping")
+        full_path = resolve_map_file(file_path)
+        if full_path is None:
+            attempted_paths = [
+                str(base_dir / file_path.lstrip("./")) for base_dir in base_dirs
+            ]
+            print(
+                f"Warning: File {file_path} does not exist in any configured data directory. "
+                f"Tried: {attempted_paths}. Skipping"
+            )
             continue
 
         try:
-            print("Processing " + full_path)
+            print(f"Processing {full_path}")
             df = pd.read_csv(full_path)
             if col_name not in df.columns:
                 print(
@@ -140,7 +160,9 @@ def main():
     with open(metadata_pickle_path, "wb") as f:
         pickle.dump(joined_metadata, f)
 
-    print(f"Processed {len(joined_metadata)} files. Global array shape: {global_array.shape}")
+    print(
+        f"Processed {len(joined_metadata)} files. Global array shape: {global_array.shape}"
+    )
     print(f"Saved to {npz_path}, {metadata_path}, and {metadata_pickle_path}")
 
 

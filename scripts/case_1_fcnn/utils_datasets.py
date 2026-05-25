@@ -84,15 +84,27 @@ def _load_array_from_npz(
 
 
 def _load_distance_table(year: int) -> dict[str, dict[str, float]]:
-    path = BASE_DIR / f"dense/spe11b_co2mass_w1_diff_{year}y.csv"
-    with open(path, newline="") as f:
-        reader = csv.reader(f)
-        header = next(reader)
-        names = header[1:]
-        return {
-            row[0]: {name: float(value) for name, value in zip(names, row[1:])}
-            for row in reader
-        }
+    try:
+        path = BASE_DIR / f"dense/spe11b_co2mass_w1_diff_{year}y.csv"
+        with open(path, newline="") as f:
+            reader = csv.reader(f)
+            header = next(reader)
+            names = header[1:]
+            return {
+                row[0]: {name: float(value) for name, value in zip(names, row[1:])}
+                for row in reader
+            }
+
+    except:
+        path = f"/home/jovyan/shared_folder/evaluation/spe11b/dense/spe11b_co2mass_w1_diff_{year}y.csv"
+        with open(path, newline="") as f:
+            reader = csv.reader(f)
+            header = next(reader)
+            names = header[1:]
+            return {
+                row[0]: {name: float(value) for name, value in zip(names, row[1:])}
+                for row in reader
+            }
 
 
 def _distance_lookup(
