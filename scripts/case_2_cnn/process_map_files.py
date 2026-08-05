@@ -1,32 +1,23 @@
-<<<<<<< HEAD
-from pdb import set_trace as st
-import numpy as np
-import pandas as pd
 import os
-import pickle
-import pathlib
-=======
 import json
 import numpy as np
 import pandas as pd
-import os
->>>>>>> main
+import pathlib
+import pickle
+import shutil
 from fnmatch import fnmatch
 
 
 def main():
-<<<<<<< HEAD
-    base_dir = pathlib.Path(__file__).resolve().parent / "../spe11b"
-    # TODO: fix paths
+    script_dir = pathlib.Path(__file__).resolve().parent
+    base_dir = script_dir / "../../spe11b"
+    map_file = script_dir / "map_files.txt"
+    metadata_path = script_dir / "spe11b_metadata_dt50y.json"
+    metadata_pickle_path = script_dir / "metadata.pkl"
+    npz_path = script_dir / "spe11b_tmco2_dt50y.npz"
+    split_dir = script_dir / "spe11b_tmco2_splits"
+    split_size = 256
 
-    map_file = "map_files.txt"
-=======
-    base_dir = 'spe11b'
-    map_file = 'map_files.txt'
-    metadata_path = 'spe11b_metadata.json'
-    npz_path = 'spe11b_tmco2.npz'
-    
->>>>>>> main
     # Read the list of files
     with open(map_file, "r") as f:
         files = [line.strip() for line in f if line.strip()]
@@ -37,10 +28,39 @@ def main():
     # Filter matching files
     matching_files = [f for f in files if fnmatch(os.path.basename(f), pattern)]
 
-    # Collect data and metadata
+    # Collect data and metadata in chunks to avoid one huge np.column_stack peak.
     data_list = []
     metadata = []
+    split_paths = []
+    split_metadata_paths = []
+    col_name = " tmCO2 [kg]"
 
+    if split_dir.exists():
+        shutil.rmtree(split_dir)
+    split_dir.mkdir(parents=True)
+
+    def save_split(split_index: int) -> None:
+        if not data_list:
+            return
+
+        split_array = np.column_stack(data_list)
+        split_npz_path = split_dir / f"spe11b_tmco2_part_{split_index:04d}.npz"
+        split_metadata_path = split_dir / f"metadata_part_{split_index:04d}.json"
+        np.savez_compressed(split_npz_path, global_array=split_array)
+
+        start = len(metadata) - len(data_list)
+        split_metadata = metadata[start:]
+        with open(split_metadata_path, "w", encoding="utf-8") as f:
+            json.dump(split_metadata, f, indent=2)
+
+        split_paths.append(split_npz_path)
+        split_metadata_paths.append(split_metadata_path)
+        print(
+            f"Saved split {split_index} with shape {split_array.shape} to {split_npz_path}"
+        )
+        data_list.clear()
+
+    split_index = 0
     for file_path in matching_files:
         full_path = os.path.join(base_dir, file_path.lstrip("./"))
         if not os.path.exists(full_path):
@@ -50,32 +70,14 @@ def main():
         try:
             print("Processing " + full_path)
             df = pd.read_csv(full_path)
-<<<<<<< HEAD
-            col_name = " tmCO2 [kg]"
-=======
-            col_name = ' tmCO2 [kg]'
->>>>>>> main
             if col_name not in df.columns:
                 print(
                     f"Warning: Column '{col_name}' not found in {full_path}, skipping"
                 )
                 continue
 
-            column_data = df[col_name].values
-<<<<<<< HEAD
-
-            # try:
-            #     np.any(np.isnan(np.array(column_data)))
-            #     st()
-            # except:
-            #     st()
-            st()
-            if np.any(np.isnan(np.array(column_data))):
-                st()
-
-=======
+            column_data = pd.to_numeric(df[col_name], errors="coerce").to_numpy()
             column_data = np.nan_to_num(column_data, nan=0.0)
->>>>>>> main
             data_list.append(column_data)
 
             # Parse metadata
@@ -86,42 +88,65 @@ def main():
             year = int(year_str)
             metadata.append((folder, year))
 
+            if len(data_list) >= split_size:
+                save_split(split_index)
+                split_index += 1
+
         except Exception as e:
             print(f"Error processing {full_path}: {e}")
             continue
 
-    if not data_list:
+    save_split(split_index)
+
+    if not split_paths:
         print("No valid data found. Ensure data is downloaded and files exist.")
         return
 
-    # Create the global 2D array
-    global_array = np.column_stack(data_list)
+    with np.load(split_paths[0]) as archive:
+        first_split = archive["global_array"]
+        n_rows = first_split.shape[0]
+        dtype = first_split.dtype
 
-    # Save the array in compressed format
-<<<<<<< HEAD
-    np.savez_compressed("spe11b_tmco2.npz", global_array=global_array)
+    global_shape = (n_rows, len(metadata))
+    global_array = np.lib.format.open_memmap(
+        split_dir / "spe11b_tmco2_joined.npy",
+        mode="w+",
+        dtype=dtype,
+        shape=global_shape,
+    )
 
-    # Save metadata
-    with open("metadata.pkl", "wb") as f:
-        pickle.dump(metadata, f)
+    column_start = 0
+    joined_metadata = []
+    for split_npz_path, split_metadata_path in zip(split_paths, split_metadata_paths):
+        with np.load(split_npz_path) as archive:
+            split_array = archive["global_array"]
+            column_end = column_start + split_array.shape[1]
+            global_array[:, column_start:column_end] = split_array
+            column_start = column_end
 
-=======
+        with open(split_metadata_path, "r", encoding="utf-8") as f:
+            joined_metadata.extend(json.load(f))
+
+    global_array.flush()
+
+    # Save the joined array in compressed format
     np.savez_compressed(npz_path, global_array=global_array)
-    
+
     # Save metadata as JSON
-    with open(metadata_path, 'w', encoding='utf-8') as f:
-        json.dump(metadata, f, indent=2)
-    
->>>>>>> main
-    print(f"Processed {len(data_list)} files. Global array shape: {global_array.shape}")
-    print(f"Saved to {npz_path} and {metadata_path}")
+    with open(metadata_path, "w", encoding="utf-8") as f:
+        json.dump(joined_metadata, f, indent=2)
 
-<<<<<<< HEAD
+    # Save metadata in the format expected by utils_datasets.py
+    with open(metadata_pickle_path, "wb") as f:
+        pickle.dump(joined_metadata, f)
 
-def get_result_name_and_year(column_index):
-=======
-def get_result_name_and_year(column_index: int, metadata_path: str = 'spe11b_metadata.json'):
->>>>>>> main
+    print(f"Processed {len(joined_metadata)} files. Global array shape: {global_array.shape}")
+    print(f"Saved to {npz_path}, {metadata_path}, and {metadata_pickle_path}")
+
+
+def get_result_name_and_year(
+    column_index: int, metadata_path: str = "spe11b_metadata_dt50y.json"
+):
     """
     Given a column index in the global array, return the result name (folder) and year.
 
@@ -137,21 +162,13 @@ def get_result_name_and_year(column_index: int, metadata_path: str = 'spe11b_met
         FileNotFoundError: If metadata_path is not found.
     """
     try:
-<<<<<<< HEAD
-        with open("metadata.pkl", "rb") as f:
-            metadata = pickle.load(f)
-    except FileNotFoundError:
-        raise FileNotFoundError(
-            "metadata.pkl not found. Run the main function first to generate it."
-        )
-
-=======
-        with open(metadata_path, 'r', encoding='utf-8') as f:
+        with open(metadata_path, "r", encoding="utf-8") as f:
             metadata = json.load(f)
     except FileNotFoundError:
-        raise FileNotFoundError(f"{metadata_path} not found. Run the main function first to generate it.")
-    
->>>>>>> main
+        raise FileNotFoundError(
+            f"{metadata_path} not found. Run the main function first to generate it."
+        )
+
     if 0 <= column_index < len(metadata):
         return tuple(metadata[column_index])
     else:
@@ -160,13 +177,9 @@ def get_result_name_and_year(column_index: int, metadata_path: str = 'spe11b_met
         )
 
 
-<<<<<<< HEAD
 def load_array_from_npz(
     npz_path: str = "spe11b_tmco2_dt50y.npz", array_key: str = "global_array"
 ) -> np.ndarray:
-=======
-def load_array_from_npz(npz_path: str = 'spe11b_tmco2.npz', array_key: str = 'global_array') -> np.ndarray:
->>>>>>> main
     """Load the global array stored in a .npz archive."""
     if not os.path.exists(npz_path):
         raise FileNotFoundError(f"Archive not found: {npz_path}")
@@ -176,13 +189,9 @@ def load_array_from_npz(npz_path: str = 'spe11b_tmco2.npz', array_key: str = 'gl
         return archive[array_key]
 
 
-<<<<<<< HEAD
 def get_spatial_maps(
     column_index1: int, column_index2: int, npz_path: str = "spe11b_tmco2_dt50y.npz"
 ) -> tuple[np.ndarray, np.ndarray]:
-=======
-def get_spatial_maps(column_index1: int, column_index2: int, npz_path: str = 'spe11b_tmco2.npz') -> tuple[np.ndarray, np.ndarray]:
->>>>>>> main
     """Return two columns from the global array as 120x840 images.
 
     The first 840 entries of each column form the first row of the image,
@@ -205,31 +214,21 @@ def get_spatial_maps(column_index1: int, column_index2: int, npz_path: str = 'sp
                 f"Column index {idx} is out of range. Valid range: 0 to {global_array.shape[1] - 1}"
             )
 
-    image1 = global_array[:expected_length, column_index1].astype(float).reshape((n_rows, n_cols))
-    image2 = global_array[:expected_length, column_index2].astype(float).reshape((n_rows, n_cols))
+    image1 = (
+        global_array[:expected_length, column_index1]
+        .astype(float)
+        .reshape((n_rows, n_cols))
+    )
+    image2 = (
+        global_array[:expected_length, column_index2]
+        .astype(float)
+        .reshape((n_rows, n_cols))
+    )
     return image1, image2
 
-<<<<<<< HEAD
-
-def get_maps_and_distance(
-    column_index1: int, column_index2: int, npz_path: str = "spe11b_tmco2_dt50y.npz"
-) -> tuple[np.ndarray, np.ndarray, float]:
-    name1, year1 = get_result_name_and_year(column_index1)
-    name2, year2 = get_result_name_and_year(column_index2)
-
-    if year1 != year2:
-        raise ValueError(f"year1 = {year1} and year2 = {year2} have to coincide.")
-
-    base_dir = pathlib.Path(__file__).resolve().parent
-    filename = (
-        base_dir
-        / f"../../../shared_folder/evaluation/spe11b/dense/spe11b_co2mass_w1_diff_{year1}y.csv"
-    )
-=======
 
 def get_distance(year: int, name1: str, name2: str) -> float:
     filename = f"/home/jovyan/shared_folder/evaluation/spe11b/dense/spe11b_co2mass_w1_diff_{year}y.csv"
->>>>>>> main
     distances = pd.read_csv(filename, index_col=0)
 
     try:
@@ -262,7 +261,12 @@ def get_distance(year: int, name1: str, name2: str) -> float:
     return distance
 
 
-def get_maps_and_distance(column_index1: int, column_index2: int, npz_path: str = 'spe11b_tmco2.npz', metadata_path: str = 'spe11b_metadata.json') -> tuple[np.ndarray, np.ndarray, float]:
+def get_maps_and_distance(
+    column_index1: int,
+    column_index2: int,
+    npz_path: str = "spe11b_tmco2_dt50y.npz",
+    metadata_path: str = "spe11b_metadata_dt50y.json",
+) -> tuple[np.ndarray, np.ndarray, float]:
     image1, image2 = get_spatial_maps(column_index1, column_index2, npz_path)
 
     name1, year1 = get_result_name_and_year(column_index1, metadata_path)
@@ -275,13 +279,12 @@ def get_maps_and_distance(column_index1: int, column_index2: int, npz_path: str 
 
     return image1, image2, distance
 
-<<<<<<< HEAD
-=======
+
 def get_all_distances(
-    metadata_path: str = 'spe11b_metadata.json',
-    distance_npz_path: str = 'spe11b_distances.npz',
+    metadata_path: str = "spe11b_metadata.json",
+    distance_npz_path: str = "spe11b_distances.npz",
 ) -> None:
-    with open(metadata_path, 'r', encoding='utf-8') as f:
+    with open(metadata_path, "r", encoding="utf-8") as f:
         metadata = json.load(f)
 
     pairs = []
@@ -299,12 +302,17 @@ def get_all_distances(
                 pairs.append((i, j))
                 values.append(distance)
             except KeyError:
-                print(f"Warning: Distance not found for {name1} and {name2} in year {year1}, skipping.")
+                print(
+                    f"Warning: Distance not found for {name1} and {name2} in year {year1}, skipping."
+                )
                 continue
 
-    np.savez_compressed(distance_npz_path, pairs=np.array(pairs, dtype=int), distances=np.array(values, dtype=float))
+    np.savez_compressed(
+        distance_npz_path,
+        pairs=np.array(pairs, dtype=int),
+        distances=np.array(values, dtype=float),
+    )
 
->>>>>>> main
 
 if __name__ == "__main__":
     main()
