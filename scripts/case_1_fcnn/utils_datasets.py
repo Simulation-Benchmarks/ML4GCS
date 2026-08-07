@@ -37,11 +37,12 @@ def _linear_scale(data: np.ndarray, feature_range: tuple[float, float]) -> np.nd
 def scale_data(
     x: np.ndarray,
     y: np.ndarray,
-    feature_range: tuple[float, float] = (0.0, 1.0),
+    input_scale_range: tuple[float, float] = (0.0, 1.0),
+    output_scale_range: tuple[float, float] = (0.0, 1.0),
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Linearly scale the full x and y datasets."""
-    x = _linear_scale(x, feature_range)
-    y = _linear_scale(y, feature_range)
+    """Linearly scale the full x and y datasets, independently."""
+    x = _linear_scale(x, input_scale_range)
+    y = _linear_scale(y, output_scale_range)
     return x, y
 
 
@@ -127,7 +128,8 @@ def create_datasets(
     data_path: str | Path = DATA_PATH,
     train_split: float = TRAIN_SPLIT,
     validation_split: float = VALIDATION_SPLIT,
-    scale_range: tuple[float, float] = (0.0, 1.0),
+    input_scale_range: tuple[float, float] = (0.0, 1.0),
+    output_scale_range: tuple[float, float] = (0.0, 1.0),
 ):
     """
     Load image pairs and distances, split into train/validation/test sets.
@@ -139,7 +141,8 @@ def create_datasets(
         data_path: Path to the .npz data file.
         train_split: Fraction of data to use for training.
         validation_split: Fraction of data to use for validation.
-        scale_range: Target range for linear scaling of x and y.
+        input_scale_range: Target range for linear scaling of x (the image pairs).
+        output_scale_range: Target range for linear scaling of y (the distances).
 
     Returns:
         x_train, y_train, x_validation, y_validation, x_test, y_test as JAX arrays.
@@ -176,7 +179,7 @@ def create_datasets(
 
     x = np.array(x, dtype=np.float32)
     y = np.array(y, dtype=np.float32)
-    x, y = scale_data(x, y, scale_range)
+    x, y = scale_data(x, y, input_scale_range, output_scale_range)
 
     x_train, y_train, x_validation, y_validation, x_test, y_test = split_data(
         x, y, train_split, validation_split

@@ -2,6 +2,10 @@
 
 set -e
 
+export XLA_PYTHON_CLIENT_PREALLOCATE=false
+export XLA_PYTHON_CLIENT_MEM_FRACTION=0.5
+export XLA_PYTHON_CLIENT_ALLOCATOR=platform
+
 rm -rf results
 mkdir results
 
