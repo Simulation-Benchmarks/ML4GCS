@@ -110,9 +110,9 @@ def test_postprocess_metrics():
 
     metrics = postprocess.compute_test_metrics(params, x_test, y_test)
 
-    np.testing.assert_allclose(metrics["mse"], 0.005, atol=1e-7)
-    np.testing.assert_allclose(metrics["rmse"], np.sqrt(0.005), atol=1e-7)
-    np.testing.assert_allclose(metrics["mae"], 0.05, atol=1e-7)
+    np.testing.assert_allclose(metrics["nmse"], 0.005, atol=1e-7)
+    np.testing.assert_allclose(metrics["nrmse"], np.sqrt(0.005), atol=1e-7)
+    np.testing.assert_allclose(metrics["nmae"], 0.05, atol=1e-7)
     assert "accuracy" not in metrics
 
 

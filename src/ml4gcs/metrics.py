@@ -55,7 +55,9 @@ def r_squared(prediction: np.ndarray, target: np.ndarray) -> float:
     return 1.0 - ss_res / ss_tot
 
 
-def plot_r_squared(prediction: np.ndarray, target: np.ndarray, output_path: str) -> float:
+def plot_r_squared(
+    prediction: np.ndarray, target: np.ndarray, output_path: str, fontsize: int = 24
+) -> float:
     """Plot predicted vs. target values annotated with R^2 and save as a PDF.
 
     Returns the computed R^2 value.
@@ -77,9 +79,10 @@ def plot_r_squared(prediction: np.ndarray, target: np.ndarray, output_path: str)
     lo = float(min(target.min(), prediction.min()))
     hi = float(max(target.max(), prediction.max()))
     ax.plot([lo, hi], [lo, hi], "r--", linewidth=1)
-    ax.set_xlabel("Target")
-    ax.set_ylabel("Prediction")
-    ax.set_title(f"$R^2$ = {r2:.4f}")
+    ax.set_xlabel("Target", fontsize=fontsize)
+    ax.set_ylabel("Prediction", fontsize=fontsize)
+    ax.set_title(f"$R^2$ = {r2:.4f}", fontsize=fontsize)
+    ax.tick_params(axis="both", labelsize=fontsize)
     fig.tight_layout()
     fig.savefig(output_path, format="pdf")
     plt.close(fig)

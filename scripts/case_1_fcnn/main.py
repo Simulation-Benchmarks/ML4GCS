@@ -57,7 +57,7 @@ if __name__ == "__main__":
 
     # train using Adam
     lr = 1e-2
-    epochs_tot = 10000
+    epochs_tot = 2000
     optimizer = optax.adam(lr)
 
     params_opt, loss_epochs, loss_train, loss_validation = train.train_model(

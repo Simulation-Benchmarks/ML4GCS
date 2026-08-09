@@ -1,0 +1,220 @@
+\documentclass[11pt]{article}
+
+\usepackage[a4paper,margin=2.5cm]{geometry}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{mathtools}
+
+\title{Case 1: Fully Connected Neural Network (FCNN)}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section{Task and data}
+
+Maps are only ever compared within the same simulation timestep: pairs are
+formed by grouping map indices by their associated year
+(\texttt{metadata[index][1]}) and pairing indices exclusively within each
+group, so $\text{img}_1$ and $\text{img}_2$ always correspond to the same
+year and, in particular, no cross-year (cross-timestep) pairs are formed.
+Within a given year, all ordered pairs $(i, j)$ of that year's indices are
+included, including the degenerate pair $i = j$ (identical maps, target
+distance $0$).
+
+The FCNN is trained as a cheap surrogate for the pairwise distance between
+SPE11B CO$_2$ mass maps, replacing the ground-truth pairwise distance table
+used in the benchmark's dense evaluation. Each raw map is a $120 \times 840$
+array of CO$_2$ mass values for a given simulation year, loaded from the
+SPE11B dataset by \texttt{utils\_datasets.create\_datasets}. All same-year
+map pairs $(\text{img}_1, \text{img}_2)$ are formed, and for each pair the
+input is the pair stacked as a $(2, 120, 840)$ array while the target $y$ is
+the corresponding scalar distance looked up from the precomputed
+\texttt{dense/spe11b\_co2mass\_w1\_diff\_$\langle$year$\rangle$y.csv}
+tables. Both the input and the target are independently rescaled linearly
+to $[0, 1]$ (\texttt{input\_scale\_range}, \texttt{output\_scale\_range})
+before the data is split into training, validation, and test sets using
+fractions $0.70$, $0.15$, and $0.15$, respectively.
+
+\section{Network architecture}
+
+Each input pair is flattened to a vector of length
+$\text{input\_dim} = 2 \times 120 \times 840$ and fed through a fully
+connected network with layer widths
+$[\text{input\_dim},\ 64,\ 64,\ 1]$ (\texttt{model.py}), i.e.\ two hidden
+layers of width $64$ followed by a single scalar output approximating the
+scaled distance between the two maps. Weights are initialized with
+He-normal initialization (Kaiming), $W \sim \mathcal{N}(0,\, 2/\text{fan\_in})$,
+where $\text{fan\_in}$ is the input width of the layer being initialized
+(e.g.\ $\text{fan\_in} = \text{input\_dim}$ for the first layer and
+$\text{fan\_in} = 64$ for the two hidden layers),
+
+biases are initialized to zero, and the SiLU activation
+$\mathrm{silu}(x) = x \cdot \sigma(x)$, with
+$\sigma(x) = 1/(1 + e^{-x})$ the logistic sigmoid function, is applied
+after every layer except the last, which is linear.
+
+
+\section{Training strategy}
+
+The network is trained with the Adam optimizer (\texttt{optax.adam}) using
+common values for hyperparameters, minimizing the
+mean squared error loss
+\begin{equation}
+  \mathcal{L}(\boldsymbol{\theta})
+  \;=\;
+  \frac{1}{N}\sum_{i=1}^{N} \left(\hat{y}_i - y_i\right)^2
+\end{equation}
+between predictions $\hat{y}_i = f(\mathbf{x}_i; \boldsymbol{\theta})$ and
+targets $y_i$ on the full training batch at every epoch (full-batch
+gradient descent, no mini-batching). Training and validation losses are
+recorded every \texttt{test\_spacing} epochs. The trained parameters are
+evaluated on the held-out test set using the metrics defined below.
+
+\section{Setup and notation}
+
+Let the test set contain $N$ samples. For sample $i \in \{1, \dots, N\}$, let
+$y_i \in \mathbb{R}$ denote the ground-truth target value and
+$\hat{y}_i \in \mathbb{R}$ denote the corresponding model prediction,
+obtained as $\hat{y}_i = f(\mathbf{x}_i; \boldsymbol{\theta})$ for input
+$\mathbf{x}_i$ and trained parameters $\boldsymbol{\theta}$.
+
+Define the pointwise residual (discrepancy)
+%
+\begin{equation}
+  e_i \;\coloneqq\; \hat{y}_i - y_i, \qquad i = 1, \dots, N .
+\end{equation}
+%
+Denote the sample mean of the targets by
+%
+\begin{equation}
+  \bar{y} \;\coloneqq\; \frac{1}{N}\sum_{i=1}^{N} y_i .
+\end{equation}
+%
+
+All metrics below are computed on the residuals $\{e_i\}_{i=1}^N$ and are
+implemented in \texttt{compute\_test\_metrics} in \texttt{postprocess.py}.
+As implemented, the error metrics are each \emph{normalized} by a
+corresponding statistic of the targets $y_i$ rather than reported in
+absolute (physical) units; this makes them dimensionless and comparable
+across variables of different magnitude. To make this explicit and avoid
+confusion with the unnormalized textbook quantities, they are named here
+\emph{Normalized MSE} (NMSE), \emph{Normalized RMSE} (NRMSE), and
+\emph{Normalized MAE} (NMAE) — note these differ from the plain MSE, RMSE,
+MAE printed as variable names in the code (\texttt{mse}, \texttt{rmse},
+\texttt{mae}), which in fact hold these normalized quantities.
+
+\section{Normalized Mean Squared Error (NMSE)}
+
+%
+\begin{equation}
+  \mathrm{NMSE}
+  \;\coloneqq\;
+  \frac{\dfrac{1}{N}\displaystyle\sum_{i=1}^{N} e_i^2}
+       {\dfrac{1}{N}\displaystyle\sum_{i=1}^{N} y_i^2}
+  \;=\;
+  \frac{\displaystyle\sum_{i=1}^{N} (\hat{y}_i - y_i)^2}
+       {\displaystyle\sum_{i=1}^{N} y_i^2} .
+  \label{eq:mse}
+\end{equation}
+%
+
+This is the mean squared residual normalized by the mean squared target
+(equivalently, the ratio of the sum of squared residuals to the sum of
+squared targets).
+
+\section{Normalized Root Mean Squared Error (NRMSE)}
+
+%
+\begin{equation}
+  \mathrm{NRMSE}
+  \;\coloneqq\;
+  \frac{\sqrt{\displaystyle\sum_{i=1}^{N} e_i^2}}
+       {\sqrt{\displaystyle\sum_{i=1}^{N} y_i^2}}
+  \;=\;
+  \sqrt{\frac{\displaystyle\sum_{i=1}^{N} (\hat{y}_i - y_i)^2}
+             {\displaystyle\sum_{i=1}^{N} y_i^2}} .
+  \label{eq:rmse}
+\end{equation}
+%
+
+As implemented, $\mathrm{NRMSE} = \sqrt{\mathrm{NMSE}}$, since
+%
+\begin{equation}
+  \mathrm{NRMSE}
+  = \frac{\sqrt{\sum_i e_i^2}}{\sqrt{\sum_i y_i^2}}
+  = \sqrt{\frac{\sum_i e_i^2}{\sum_i y_i^2}}
+  = \sqrt{\mathrm{NMSE}} .
+\end{equation}
+%
+
+\section{Normalized Mean Absolute Error (NMAE)}
+
+%
+\begin{equation}
+  \mathrm{NMAE}
+  \;\coloneqq\;
+  \frac{\dfrac{1}{N}\displaystyle\sum_{i=1}^{N} |e_i|}
+       {\dfrac{1}{N}\displaystyle\sum_{i=1}^{N} y_i}
+  \;=\;
+  \frac{\displaystyle\sum_{i=1}^{N} |\hat{y}_i - y_i|}
+       {\displaystyle\sum_{i=1}^{N} y_i} .
+  \label{eq:mae}
+\end{equation}
+%
+This is the mean absolute residual normalized by the (signed) mean of the
+targets, $\bar{y} = \frac{1}{N}\sum_i y_i$. 
+
+
+\section{Coefficient of determination ($R^2$)}
+
+Define the residual sum of squares
+%
+\begin{equation}
+  \mathrm{SS}_{\mathrm{res}}
+  \;\coloneqq\;
+  \sum_{i=1}^{N} e_i^2
+  \;=\;
+  \sum_{i=1}^{N} (\hat{y}_i - y_i)^2 ,
+  \label{eq:ssres}
+\end{equation}
+%
+and the total sum of squares
+%
+\begin{equation}
+  \mathrm{SS}_{\mathrm{tot}}
+  \;\coloneqq\;
+  \sum_{i=1}^{N} (y_i - \bar{y})^2 .
+  \label{eq:sstot}
+\end{equation}
+%
+The coefficient of determination is then
+%
+\begin{equation}
+  R^2
+  \;\coloneqq\;
+  1 - \frac{\mathrm{SS}_{\mathrm{res}}}{\mathrm{SS}_{\mathrm{tot}}} ,
+  \qquad \text{when } \mathrm{SS}_{\mathrm{tot}} \neq 0 ,
+  \label{eq:r2}
+\end{equation}
+%
+with the degenerate case $\mathrm{SS}_{\mathrm{tot}} = 0$ (i.e.\ every
+target $y_i$ equals $\bar{y}$) handled by convention as
+%
+\begin{equation}
+  R^2
+  \;\coloneqq\;
+  \begin{cases}
+    1, & \text{if } \mathrm{SS}_{\mathrm{res}} = 0 \ (\text{i.e.}\ \hat{y}_i = y_i \ \forall i), \\[4pt]
+    0, & \text{if } \mathrm{SS}_{\mathrm{res}} \neq 0 .
+  \end{cases}
+  \label{eq:r2-degenerate}
+\end{equation}
+%
+The scatter plot produced by \texttt{plot\_r\_squared} displays
+$\hat{y}_i$ against $y_i$ together with the identity line $\hat{y} = y$,
+and annotates the figure title with the value of $R^2$ from
+Eq.~\eqref{eq:r2}/\eqref{eq:r2-degenerate}.
+
+\end{document}

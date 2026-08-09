@@ -20,18 +20,18 @@ def compute_test_metrics(params, x_test, y_test):
 
     discrepancy = y_pred - y_test
 
-    mse = float(np.mean(discrepancy**2) / np.mean(y_test**2))
-    rmse = float(np.sqrt(np.sum(discrepancy**2)) / np.sqrt(np.sum(y_test**2)))
-    mae = float(np.mean(np.abs(discrepancy)) / np.mean(y_test))
+    nmse = float(np.mean(discrepancy**2) / np.mean(y_test**2))
+    nrmse = float(np.sqrt(np.sum(discrepancy**2)) / np.sqrt(np.sum(y_test**2)))
+    nmae = float(np.mean(np.abs(discrepancy)) / np.mean(y_test))
 
     ss_res = float(np.sum(discrepancy**2))
     ss_tot = float(np.sum((y_test - np.mean(y_test)) ** 2))
     r2 = 1.0 - ss_res / ss_tot if ss_tot != 0.0 else float(ss_res == 0.0)
 
     return {
-        "mse": mse,
-        "rmse": rmse,
-        "mae": mae,
+        "nmse": nmse,
+        "nrmse": nrmse,
+        "nmae": nmae,
         "r2": r2,
     }, y_pred, y_test
 
@@ -63,11 +63,19 @@ def main():
 
     metrics, y_pred, y_test = compute_test_metrics(params, x_test, y_test)
 
+    metrics_lines = [
+        f"Normalized Mean Squared Error (NMSE): {metrics['nmse']:.6e}",
+        f"Normalized Root Mean Squared Error (NRMSE): {metrics['nrmse']:.6e}",
+        f"Normalized Mean Absolute Error (NMAE): {metrics['nmae']:.6e}",
+        f"Coefficient of Determination (R2): {metrics['r2']:.6f}",
+    ]
+
     print("\nTest metrics")
-    print(f"MSE: {metrics['mse']:.6e}")
-    print(f"RMSE: {metrics['rmse']:.6e}")
-    print(f"MAE: {metrics['mae']:.6e}")
-    print(f"R2: {metrics['r2']:.6f}")
+    for line in metrics_lines:
+        print(line)
+
+    with open(results_dir / "test_metrics.txt", "w") as f:
+        f.write("\n".join(metrics_lines) + "\n")
 
     plot_r_squared(y_pred, y_test, metrics["r2"], results_dir / "r_squared.pdf")
 
