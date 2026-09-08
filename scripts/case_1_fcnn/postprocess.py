@@ -28,7 +28,7 @@ def compute_test_metrics(params, test_dataset, batch_size=256):
             for start in range(0, n_pairs, batch_size)
         ]
     )
-    y_test = np.asarray(test_dataset.y, dtype=y_pred.dtype)
+    y_test = np.asarray(test_dataset.distances, dtype=y_pred.dtype)
 
     discrepancy = y_pred - y_test
 
@@ -72,7 +72,7 @@ def main():
     with np.load(test_dataset_path) as data:
         test_dataset = utils_datasets.PairDataset(
             jnp.asarray(data["images"]),
-            jnp.asarray(data["pair_indices_test"]),
+            jnp.asarray(data["index_image_pairs_test"]),
             jnp.asarray(data["y_test"]),
         )
 

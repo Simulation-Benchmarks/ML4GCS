@@ -4,217 +4,265 @@
 \usepackage{amsmath}
 \usepackage{amssymb}
 \usepackage{mathtools}
+\usepackage{booktabs}
+\usepackage{xcolor}
 
-\title{Case 1: Fully Connected Neural Network (FCNN)}
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\Gr}{\mathcal{G}}
+\newcommand{\Ti}{\mathcal{T}}
+
+\title{Case 1: an FCNN surrogate for the SPE11B pairwise distance}
 \author{}
 \date{}
 
 \begin{document}
 \maketitle
 
-\section{Task and data}
+\section{Problem}
 
-Maps are only ever compared within the same simulation timestep: pairs are
-formed by grouping map indices by their associated year
-(\texttt{metadata[index][1]}) and pairing indices exclusively within each
-group, so $\text{img}_1$ and $\text{img}_2$ always correspond to the same
-year and, in particular, no cross-year (cross-timestep) pairs are formed.
-Within a given year, all ordered pairs $(i, j)$ of that year's indices are
-included, including the degenerate pair $i = j$ (identical maps, target
-distance $0$).
-
-The FCNN is trained as a cheap surrogate for the pairwise distance between
-SPE11B CO$_2$ mass maps, replacing the ground-truth pairwise distance table
-used in the benchmark's dense evaluation. Each raw map is a $120 \times 840$
-array of CO$_2$ mass values for a given simulation year, loaded from the
-SPE11B dataset by \texttt{utils\_datasets.create\_datasets}. All same-year
-map pairs $(\text{img}_1, \text{img}_2)$ are formed, and for each pair the
-input is the pair stacked as a $(2, 120, 840)$ array while the target $y$ is
-the corresponding scalar distance looked up from the precomputed
-\texttt{dense/spe11b\_co2mass\_w1\_diff\_$\langle$year$\rangle$y.csv}
-tables. Both the input and the target are independently rescaled linearly
-to $[0, 1]$ (\texttt{input\_scale\_range}, \texttt{output\_scale\_range})
-before the data is split into training, validation, and test sets using
-fractions $0.70$, $0.15$, and $0.15$, respectively.
-
-\section{Network architecture}
-
-Each input pair is flattened to a vector of length
-$\text{input\_dim} = 2 \times 120 \times 840$ and fed through a fully
-connected network with layer widths
-$[\text{input\_dim},\ 64,\ 64,\ 1]$ (\texttt{model.py}), i.e.\ two hidden
-layers of width $64$ followed by a single scalar output approximating the
-scaled distance between the two maps. Weights are initialized with
-He-normal initialization (Kaiming), $W \sim \mathcal{N}(0,\, 2/\text{fan\_in})$,
-where $\text{fan\_in}$ is the input width of the layer being initialized
-(e.g.\ $\text{fan\_in} = \text{input\_dim}$ for the first layer and
-$\text{fan\_in} = 64$ for the two hidden layers),
-
-biases are initialized to zero, and the SiLU activation
-$\mathrm{silu}(x) = x \cdot \sigma(x)$, with
-$\sigma(x) = 1/(1 + e^{-x})$ the logistic sigmoid function, is applied
-after every layer except the last, which is linear.
-
-
-\section{Training strategy}
-
-The network is trained with the Adam optimizer (\texttt{optax.adam}) using
-common values for hyperparameters, minimizing the
-mean squared error loss
-\begin{equation}
-  \mathcal{L}(\boldsymbol{\theta})
-  \;=\;
-  \frac{1}{N}\sum_{i=1}^{N} \left(\hat{y}_i - y_i\right)^2
-\end{equation}
-between predictions $\hat{y}_i = f(\mathbf{x}_i; \boldsymbol{\theta})$ and
-targets $y_i$ on the full training batch at every epoch (full-batch
-gradient descent, no mini-batching). Training and validation losses are
-recorded every \texttt{test\_spacing} epochs. The trained parameters are
-evaluated on the held-out test set using the metrics defined below.
-
-\section{Setup and notation}
-
-Let the test set contain $N$ samples. For sample $i \in \{1, \dots, N\}$, let
-$y_i \in \mathbb{R}$ denote the ground-truth target value and
-$\hat{y}_i \in \mathbb{R}$ denote the corresponding model prediction,
-obtained as $\hat{y}_i = f(\mathbf{x}_i; \boldsymbol{\theta})$ for input
-$\mathbf{x}_i$ and trained parameters $\boldsymbol{\theta}$.
-
-Define the pointwise residual (discrepancy)
+The SPE11B benchmark compares submissions through a pairwise distance table:
+for every reporting year, the Wasserstein-1 distance between the CO$_2$ mass
+images of each two submissions. We train a network
 %
 \begin{equation}
-  e_i \;\coloneqq\; \hat{y}_i - y_i, \qquad i = 1, \dots, N .
+  f_{\boldsymbol\theta} : \R^{2 \times 120 \times 840} \to \R,
+  \qquad
+  f_{\boldsymbol\theta}(M, M') \approx d_t(M, M'),
+  \label{eq:problem}
 \end{equation}
 %
-Denote the sample mean of the targets by
+to reproduce that table from the two images alone, as a cheap surrogate for
+evaluating $d_t$.
+
+\section{Notation}
+
+\begin{center}
+\begin{tabular}{ll}
+  \toprule
+  $\Gr = \{g_0 < \dots < g_{33}\}$ & the $G = 34$ submissions, alphabetically \\
+  $\Ti = \{0, 5, \dots, 1000\}$ & the $T = 201$ reporting years \\
+  $M \in \R^{120 \times 840}$ & one image: a field of CO$_2$ mass, in kg per cell \\
+  $D^{(t)} \in \R^{34 \times 34}$ & ground-truth distance table at year $t$ \\
+  \bottomrule
+\end{tabular}
+\end{center}
+
+\noindent
+$D^{(t)}$ is symmetric with zero diagonal, and exists for $t \neq 0$ only:
+$200$ of the $201$ years.\footnote{One table per file
+\texttt{dense/spe11b\_co2mass\_w1\_diff\_$t$y.csv}. Their row and column labels
+drop the trailing \texttt{1} of single-submission groups
+(\texttt{calgary} for $\texttt{calgary1}$); \texttt{\_distance\_lookup} undoes
+the relabelling.}
+
+\section{Data}
+
+\paragraph{Images.} A single archive\footnote{%
+\texttt{spe11b\_tmco2\_dt50y\_images.npz}, built by
+\texttt{process\_map\_files.py}. The suffix \texttt{dt50y} is misleading: the
+interval in the file is $5$ years.} holds one image per column, flattened
+row-major over the $840 \times 120$ grid, its column index $k$ being
+\texttt{index\_image\_in\_archive} in the code:
 %
 \begin{equation}
-  \bar{y} \;\coloneqq\; \frac{1}{N}\sum_{i=1}^{N} y_i .
+  A \in \R^{100800 \times 6833},
+  \qquad
+  M_k \coloneqq A_{:,k} \text{ reshaped},
+  \qquad
+  (M_k)_{r,c} = A_{\,840 r + c,\; k}.
+  \label{eq:images}
 \end{equation}
 %
+Rows run bottom-up ($r = 0$ is the deepest layer), so plotting requires
+\texttt{origin="lower"}.
 
-All metrics below are computed on the residuals $\{e_i\}_{i=1}^N$ and are
-implemented in \texttt{compute\_test\_metrics} in \texttt{postprocess.py}.
-As implemented, the error metrics are each \emph{normalized} by a
-corresponding statistic of the targets $y_i$ rather than reported in
-absolute (physical) units; this makes them dimensionless and comparable
-across variables of different magnitude. To make this explicit and avoid
-confusion with the unnormalized textbook quantities, they are named here
-\emph{Normalized MSE} (NMSE), \emph{Normalized RMSE} (NRMSE), and
-\emph{Normalized MAE} (NMAE) — note these differ from the plain MSE, RMSE,
-MAE printed as variable names in the code (\texttt{mse}, \texttt{rmse},
-\texttt{mae}), which in fact hold these normalized quantities.
-
-\section{Normalized Mean Squared Error (NMSE)}
-
+\paragraph{Column labels.} The companion file
+\texttt{spe11b\_tmco2\_dt50y\_indices.json} is a list of labels, not a numeric
+array:
 %
 \begin{equation}
-  \mathrm{NMSE}
-  \;\coloneqq\;
-  \frac{\dfrac{1}{N}\displaystyle\sum_{i=1}^{N} e_i^2}
-       {\dfrac{1}{N}\displaystyle\sum_{i=1}^{N} y_i^2}
-  \;=\;
-  \frac{\displaystyle\sum_{i=1}^{N} (\hat{y}_i - y_i)^2}
-       {\displaystyle\sum_{i=1}^{N} y_i^2} .
-  \label{eq:mse}
+  \mu : \{0, \dots, 6832\} \to \Gr \times \Ti,
+  \qquad
+  \mu(k) = (g_k, \tau_k).
+  \label{eq:labels}
 \end{equation}
 %
-
-This is the mean squared residual normalized by the mean squared target
-(equivalently, the ratio of the sum of squared residuals to the sum of
-squared targets).
-
-\section{Normalized Root Mean Squared Error (NRMSE)}
-
+It is a bijection onto $(\Gr \times \Ti) \setminus \{(\texttt{kfupm1}, 815)\}$,
+the one image missing from the source data; hence the column count
 %
 \begin{equation}
-  \mathrm{NRMSE}
-  \;\coloneqq\;
-  \frac{\sqrt{\displaystyle\sum_{i=1}^{N} e_i^2}}
-       {\sqrt{\displaystyle\sum_{i=1}^{N} y_i^2}}
-  \;=\;
-  \sqrt{\frac{\displaystyle\sum_{i=1}^{N} (\hat{y}_i - y_i)^2}
-             {\displaystyle\sum_{i=1}^{N} y_i^2}} .
-  \label{eq:rmse}
+  6833 = G\,T - 1 = 34 \cdot 201 - 1 .
+\end{equation}
+
+\paragraph{Ordering.} Columns are sorted by year, then alphabetically by group.
+With $\delta_k \coloneqq \mathbf{1}[\,k \ge 5551\,]$ correcting for the missing
+image,
+%
+\begin{equation}
+  \tau_k = 5 \bigl\lfloor (k + \delta_k) / G \bigr\rfloor,
+  \qquad
+  g_k = g_{\,(k + \delta_k) \bmod G} .
+  \label{eq:ordering}
 \end{equation}
 %
-
-As implemented, $\mathrm{NRMSE} = \sqrt{\mathrm{NMSE}}$, since
+The year blocks $\mathcal{I}_t \coloneqq \{k : \tau_k = t\}$ are therefore
+contiguous, of size $34$ ($33$ for $t = 815$):
 %
 \begin{equation}
-  \mathrm{NRMSE}
-  = \frac{\sqrt{\sum_i e_i^2}}{\sqrt{\sum_i y_i^2}}
-  = \sqrt{\frac{\sum_i e_i^2}{\sum_i y_i^2}}
-  = \sqrt{\mathrm{NMSE}} .
+  \mathcal{I}_{5s} = \{34 s, \dots, 34 s + 33\},
+  \qquad s \le 162 .
+  \label{eq:blocks}
+\end{equation}
+
+\section{Dataset}
+
+The four steps below build the training pairs. Their symbols carry the
+following names in \texttt{utils\_datasets.py}:
+%
+\begin{center}
+\begin{tabular}{ll}
+  \toprule
+  $k$ & \texttt{index\_image\_in\_archive} \\
+  $\pi(k)$ & \texttt{index\_image} \\
+  $\ell$, a row of $\mathcal{P}$ & \texttt{index\_pair} \\
+  $\mathcal{P}$ & \texttt{index\_image\_pairs} \\
+  \bottomrule
+\end{tabular}
+\end{center}
+
+\paragraph{1. Column selection.} \texttt{create\_datasets} keeps
+$\mathcal{K} \coloneqq \texttt{range(start, stop, step)}$, $n \coloneqq
+|\mathcal{K}|$, and re-indexes it by position,
+%
+\begin{equation}
+  \pi(k) = \frac{k - \texttt{start}}{\texttt{step}} \in \{0, \dots, n-1\},
+  \qquad
+  X \in \R^{\,n \times 120 \times 840},
+  \quad X_{\pi(k)} = M_k .
+  \label{eq:selection}
 \end{equation}
 %
+In \texttt{main.py}, $\texttt{start} = 34 = G$ drops exactly the year-$0$ block
+$\mathcal{I}_0$, which has no $D^{(t)}$, and $\texttt{step} = 1$, so
+$\pi(k) = k - 34$ and $n = 6799$.
 
-\section{Normalized Mean Absolute Error (NMAE)}
-
+\paragraph{2. Pairing, within a year.} With $\mathcal{K}_t \coloneqq
+\mathcal{K} \cap \mathcal{I}_t$ and $n_t \coloneqq |\mathcal{K}_t| \le G$,
 %
 \begin{equation}
-  \mathrm{NMAE}
-  \;\coloneqq\;
-  \frac{\dfrac{1}{N}\displaystyle\sum_{i=1}^{N} |e_i|}
-       {\dfrac{1}{N}\displaystyle\sum_{i=1}^{N} y_i}
-  \;=\;
-  \frac{\displaystyle\sum_{i=1}^{N} |\hat{y}_i - y_i|}
-       {\displaystyle\sum_{i=1}^{N} y_i} .
-  \label{eq:mae}
+  \mathcal{P} \coloneqq
+  \biguplus_{t} \; \pi(\mathcal{K}_t) \times \pi(\mathcal{K}_t),
+  \qquad
+  N \coloneqq |\mathcal{P}| = \sum_t n_t^2 .
+  \label{eq:pairs}
 \end{equation}
 %
-This is the mean absolute residual normalized by the (signed) mean of the
-targets, $\bar{y} = \frac{1}{N}\sum_i y_i$. 
+Both orderings and the diagonal are included; no pair crosses years.
 
+\begingroup\color{red}
+\noindent\textbf{Why within a year: a constraint of the data, not a modelling
+choice.} The benchmark publishes one $34 \times 34$ table per year, so
+$D^{(t)}_{pq}$ is defined only for two submissions compared \emph{at the same}
+$t$. No ground-truth distance exists between images at different times, e.g.\
+between $(\texttt{calgary1}, 5\,\mathrm{y})$ and
+$(\texttt{sintef1}, 900\,\mathrm{y})$. Pairing across timesteps would require
+computing the Wasserstein-1 distance ourselves, which is done nowhere in this
+repository.
+\endgroup
 
-\section{Coefficient of determination ($R^2$)}
-
-Define the residual sum of squares
+\paragraph{3. Targets.} For $\ell = (\pi(i), \pi(j)) \in \mathcal{P}$,
 %
 \begin{equation}
-  \mathrm{SS}_{\mathrm{res}}
-  \;\coloneqq\;
-  \sum_{i=1}^{N} e_i^2
-  \;=\;
-  \sum_{i=1}^{N} (\hat{y}_i - y_i)^2 ,
-  \label{eq:ssres}
+  y_\ell \coloneqq D^{(\tau_i)}_{\,p(i),\,p(j)},
+  \qquad
+  p(k) \coloneqq (k + \delta_k) \bmod G
+  \ \ \text{the rank of } g_k \text{ in } \Gr .
+  \label{eq:targets}
+\end{equation}
+
+\paragraph{4. Scaling and splitting.} Inputs and targets are min--max scaled to
+$[0,1]$ independently, with extrema taken over the whole dataset; the rows of
+$\mathcal{P}$ are then cut into contiguous $70/15/15$ slices, unshuffled.
+
+\paragraph{Index bounds.} A row of $\mathcal{P}$ has both entries in
+$\{0, \dots, n-1\}$, but within one year block they range only over the $n_t$
+consecutive positions of that block. For \texttt{main.py} the block of year
+$5s$ occupies rows $1156(s-1), \dots, 1156s - 1$ with entries in
+$\{34(s-1), \dots, 34(s-1)+33\}$, so the array opens with
+%
+\begin{equation}
+  (0,0), (0,1), \dots, (0,33),\ (1,0), \dots, (33,33),\ (34,34), \dots
 \end{equation}
 %
-and the total sum of squares
+The bound $33$ is $G - 1$: the submissions available at one year, not a number
+of timesteps. A single submission contributes $T = 201$ images, but spread over
+$201$ different blocks.
+
+\paragraph{Counts.} For \texttt{main.py}, $n_t = 34$ for all years but
+$n_{815} = 33$, so
 %
 \begin{equation}
-  \mathrm{SS}_{\mathrm{tot}}
-  \;\coloneqq\;
-  \sum_{i=1}^{N} (y_i - \bar{y})^2 .
-  \label{eq:sstot}
+  N = 199 \cdot 34^2 + 33^2 = 231133
+  \;\longrightarrow\;
+  161793 \,/\, 34669 \,/\, 34671 .
+  \label{eq:counts}
 \end{equation}
 %
-The coefficient of determination is then
+Two consequences of the choices above are worth stating. Scaling before
+splitting makes the two extrema statistics of the test set as well. And since
+the rows of $\mathcal{P}$ are ordered by year, a contiguous split is a
+\emph{temporal} one: training covers years $5$--$700$, validation
+$700$--$855$, test $855$--$1000$, so the model is assessed by extrapolation in
+time.
+
+The three sets share one image stack $X$; only $\mathcal{P}$ is split, so
+memory grows with $n$ and not with $N$.
+
+\section{Model}
+
+A pair is flattened to $x_\ell \in \R^{d}$, $d = 2 \cdot 120 \cdot 840 =
+201600$, and passed through a fully connected network of widths $[d, 64, 64,
+1]$. Activations are SiLU, $\mathrm{silu}(x) = x\,\sigma(x)$, on every layer but
+the last, which is linear. Weights use He initialization,
+$W \sim \mathcal{N}(0, 2/\mathrm{fan\_in})$; biases start at zero.
+
+\section{Training}
+
+Adam on the mean squared error over minibatches $B$,
 %
 \begin{equation}
-  R^2
-  \;\coloneqq\;
-  1 - \frac{\mathrm{SS}_{\mathrm{res}}}{\mathrm{SS}_{\mathrm{tot}}} ,
-  \qquad \text{when } \mathrm{SS}_{\mathrm{tot}} \neq 0 ,
+  \mathcal{L}(\boldsymbol\theta)
+  = \frac{1}{|B|} \sum_{\ell \in B}
+    \bigl( f_{\boldsymbol\theta}(x_\ell) - y_\ell \bigr)^2 ,
+  \label{eq:loss}
+\end{equation}
+%
+with the training rows reshuffled each epoch. \texttt{main.py} uses
+$|B| = 128$, learning rate $10^{-2}$ and $100$ epochs, i.e.\ $1264$ steps per
+epoch; losses are logged every $10$.
+
+\section{Test metrics}
+
+Let $e_i \coloneqq \hat{y}_i - y_i$ be the residual on the $i$-th of the $N$
+test pairs and $\bar{y}$ the mean target. \texttt{postprocess.py} reports
+%
+\begin{align}
+  \mathrm{NMSE} &= \frac{\sum_i e_i^2}{\sum_i y_i^2},
+  &
+  \mathrm{NMAE} &= \frac{\sum_i |e_i|}{\sum_i y_i},
+  \label{eq:nmse} \\[4pt]
+  \mathrm{NRMSE} &= \sqrt{\mathrm{NMSE}},
+  &
+  R^2 &= 1 - \frac{\sum_i e_i^2}{\sum_i (y_i - \bar{y})^2} .
   \label{eq:r2}
-\end{equation}
+\end{align}
 %
-with the degenerate case $\mathrm{SS}_{\mathrm{tot}} = 0$ (i.e.\ every
-target $y_i$ equals $\bar{y}$) handled by convention as
-%
-\begin{equation}
-  R^2
-  \;\coloneqq\;
-  \begin{cases}
-    1, & \text{if } \mathrm{SS}_{\mathrm{res}} = 0 \ (\text{i.e.}\ \hat{y}_i = y_i \ \forall i), \\[4pt]
-    0, & \text{if } \mathrm{SS}_{\mathrm{res}} \neq 0 .
-  \end{cases}
-  \label{eq:r2-degenerate}
-\end{equation}
-%
-The scatter plot produced by \texttt{plot\_r\_squared} displays
-$\hat{y}_i$ against $y_i$ together with the identity line $\hat{y} = y$,
-and annotates the figure title with the value of $R^2$ from
-Eq.~\eqref{eq:r2}/\eqref{eq:r2-degenerate}.
+The first three are each normalized by a statistic of the targets, hence
+dimensionless; they are \emph{not} the plain MSE, RMSE and MAE, despite the
+names \texttt{mse}, \texttt{rmse}, \texttt{mae} carrying them in the code. When
+$\sum_i (y_i - \bar{y})^2 = 0$, the convention is $R^2 = 1$ if the residuals
+vanish and $R^2 = 0$ otherwise.
+\texttt{plot\_r\_squared} scatters $\hat{y}_i$ against $y_i$ with the identity
+line and annotates $R^2$.
 
 \end{document}

@@ -98,21 +98,23 @@ def test_loss_positive_for_wrong_prediction():
     assert float(train.loss_fn(params, x, y)) > 0.0
 
 
-def _pair_dataset(pair_values, y):
+def _pair_dataset(pair_values, distances):
     """PairDataset whose gathered pairs equal `pair_values`, one 1-pixel image
     per entry, so a gathered pair flattens to a length-2 model input."""
     flat = [value for pair in pair_values for value in pair]
     images = jnp.array(flat, dtype=jnp.float32).reshape(len(flat), 1)
-    pair_indices = jnp.arange(len(flat), dtype=jnp.int32).reshape(len(pair_values), 2)
+    index_image_pairs = jnp.arange(len(flat), dtype=jnp.int32).reshape(
+        len(pair_values), 2
+    )
     return utils_datasets.PairDataset(
-        images, pair_indices, jnp.array(y, dtype=jnp.float32)
+        images, index_image_pairs, jnp.array(distances, dtype=jnp.float32)
     )
 
 
 def test_pair_dataset_gathers_without_duplicating():
     images = jnp.arange(12, dtype=jnp.float32).reshape(3, 2, 2)
-    pair_indices = jnp.array([[0, 1], [1, 2], [0, 2], [2, 0]], dtype=jnp.int32)
-    dataset = utils_datasets.PairDataset(images, pair_indices, jnp.zeros(4))
+    index_image_pairs = jnp.array([[0, 1], [1, 2], [0, 2], [2, 0]], dtype=jnp.int32)
+    dataset = utils_datasets.PairDataset(images, index_image_pairs, jnp.zeros(4))
 
     pairs = dataset.gather()
 
@@ -120,9 +122,11 @@ def test_pair_dataset_gathers_without_duplicating():
     assert dataset.x_shape == (2, 2, 2)
     assert pairs.shape == (4, 2, 2, 2)
     # Each pair is the right two images, and the stack itself never grew.
-    for row, (i, j) in enumerate(np.asarray(pair_indices)):
-        np.testing.assert_allclose(pairs[row, 0], images[i])
-        np.testing.assert_allclose(pairs[row, 1], images[j])
+    for index_pair, (index_image_1, index_image_2) in enumerate(
+        np.asarray(index_image_pairs)
+    ):
+        np.testing.assert_allclose(pairs[index_pair, 0], images[index_image_1])
+        np.testing.assert_allclose(pairs[index_pair, 1], images[index_image_2])
     assert images.shape[0] == 3
     np.testing.assert_allclose(dataset.gather(slice(1, 3)), pairs[1:3])
 
@@ -190,7 +194,9 @@ def test_train_single_input():
     )
 
     final_loss = float(
-        train.pair_loss_fn(params, dataset.images, dataset.pair_indices, dataset.y)
+        train.pair_loss_fn(
+            params, dataset.images, dataset.index_image_pairs, dataset.distances
+        )
     )
     assert final_loss < 1e-8
     assert loss_train[-1] < loss_train[0]

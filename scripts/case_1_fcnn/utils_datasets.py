@@ -1,19 +1,46 @@
-"""Dataset creation utilities."""
+"""Dataset creation utilities.
+
+Index vocabulary, from the coarsest to the finest (see
+``doc/description_case_1_fcnn.tex`` for the same names in mathematical form):
+
+An image is one 120 x 840 field of total CO2 mass in kg, produced by one
+university at one reporting time. It is the only kind of 2D array here.
+
+    index_university        0..33      which submission. In the code a university
+                                       is carried by its *name*, because that
+                                       name is the key into the distance tables.
+    index_time              0..200     which reporting time. In the code a time
+                                       is carried by its *year* (0, 5, ..., 1000),
+                                       because the year names the distance file:
+                                       year = 5 * index_time.
+    index_image_in_archive  0..6832    one column of the packed archive, i.e. one
+                                       (university, time) combination.
+    index_image             0..n-1     one row of the image stack loaded here; n
+                                       is how many images create_datasets keeps.
+    index_pair              0..n_pairs-1  one row of ``index_image_pairs``, i.e.
+                                       one (image, image) couple at a common time.
+    index_image_row         0..119     row of a single image.
+    index_image_column      0..839     column of a single image.
+"""
 
 from pdb import set_trace as st
 
 import csv
-import pickle
+import json
 from pathlib import Path
 
 import numpy as np
 import jax.numpy as jnp
 
 BASE_DIR = Path(__file__).resolve().parent
-DATA_PATH = BASE_DIR / "spe11b_tmco2_dt50y.npz"
-METADATA_PATH = BASE_DIR / "metadata.pkl"
+DATA_PATH = BASE_DIR / "spe11b_tmco2_dt50y_images.npz"
+IMAGE_LABELS_PATH = BASE_DIR / "spe11b_tmco2_dt50y_indices.json"
 TRAIN_SPLIT = 0.7
 VALIDATION_SPLIT = 0.15
+
+N_IMAGE_ROWS = 120
+N_IMAGE_COLUMNS = 840
+N_PIXELS_PER_IMAGE = N_IMAGE_ROWS * N_IMAGE_COLUMNS
 
 
 def _linear_scale(data: np.ndarray, feature_range: tuple[float, float]) -> np.ndarray:
@@ -77,88 +104,107 @@ def split_data(
     )
 
 
-def _load_array_from_npz(
+def _load_packed_images(
     npz_path: str | Path, array_key: str = "global_array"
 ) -> np.ndarray:
+    """The (n_pixels_per_image x n_images) archive; one column is one image."""
     with np.load(npz_path, allow_pickle=True) as archive:
         return archive[array_key]
 
 
-def _load_distance_table(year: int) -> dict[str, dict[str, float]]:
-    try:
-        path = BASE_DIR / f"dense/spe11b_co2mass_w1_diff_{year}y.csv"
-        with open(path, newline="") as f:
-            reader = csv.reader(f)
-            header = next(reader)
-            names = header[1:]
-            return {
-                row[0]: {name: float(value) for name, value in zip(names, row[1:])}
-                for row in reader
+def _read_distance_table(path: str | Path) -> dict[str, dict[str, float]]:
+    """Read one year's table as distances[university_1][university_2]."""
+    with open(path, newline="") as f:
+        reader = csv.reader(f)
+        university_names = next(reader)[1:]
+        return {
+            csv_row[0]: {
+                university_name: float(value)
+                for university_name, value in zip(university_names, csv_row[1:])
             }
+            for csv_row in reader
+        }
 
-    except:
-        path = f"/home/jovyan/shared_folder/evaluation/spe11b/dense/spe11b_co2mass_w1_diff_{year}y.csv"
-        with open(path, newline="") as f:
-            reader = csv.reader(f)
-            header = next(reader)
-            names = header[1:]
-            return {
-                row[0]: {name: float(value) for name, value in zip(names, row[1:])}
-                for row in reader
-            }
+
+def _load_distance_table(year: int) -> dict[str, dict[str, float]]:
+    """Ground-truth distance table for one year, local copy or cluster path."""
+    file_name = f"spe11b_co2mass_w1_diff_{year}y.csv"
+    try:
+        return _read_distance_table(BASE_DIR / "dense" / file_name)
+    except OSError:
+        return _read_distance_table(
+            f"/home/jovyan/shared_folder/evaluation/spe11b/dense/{file_name}"
+        )
 
 
 def _distance_lookup(
-    name1: str, name2: str, year: int, cache: dict[int, dict[str, dict[str, float]]]
+    university_1: str,
+    university_2: str,
+    year: int,
+    table_cache: dict[int, dict[str, dict[str, float]]],
 ) -> float:
-    if year not in cache:
-        cache[year] = _load_distance_table(year)
+    """Ground-truth distance between two universities at one year.
 
-    distances = cache[year]
-    row_name = name1[:-1] if name1.endswith("1") and name1 not in distances else name1
+    The tables drop the trailing "1" of single-submission groups
+    ("calgary" for "calgary1"), so both labels may need stripping.
+    """
+    if year not in table_cache:
+        table_cache[year] = _load_distance_table(year)
+
+    distances = table_cache[year]
+    row_name = (
+        university_1[:-1]
+        if university_1.endswith("1") and university_1 not in distances
+        else university_1
+    )
     row = distances[row_name]
-    col_name = name2[:-1] if name2.endswith("1") and name2 not in row else name2
-    return row[col_name]
+    column_name = (
+        university_2[:-1]
+        if university_2.endswith("1") and university_2 not in row
+        else university_2
+    )
+    return row[column_name]
 
 
 class PairDataset:
-    """Same-year image pairs held as (i, j) indices into a shared image stack.
+    """Same-time image couples held as index pairs into a shared image stack.
 
-    ``images`` stores each used map exactly once, so the pair tensor is only
+    ``images`` stores each used image exactly once, so the couple tensor is only
     materialized by ``gather``, one batch at a time, on whatever device
-    ``images`` lives on. Storing the pairs directly instead would write every
-    image once per pair it appears in -- about 2 * len(self) / n_images copies,
-    ~67x for the SPE11B maps (0.39 GB of images -> a 26 GB pair tensor for 966
-    images), which is what used to exhaust host RAM.
+    ``images`` lives on.
 
     Attributes:
-        images: (n_images, n_rows, n_cols) stack of the scaled maps.
-        pair_indices: (n_pairs, 2) rows into ``images``.
-        y: (n_pairs,) scaled target distance per pair.
+        images: (n, N_IMAGE_ROWS, N_IMAGE_COLUMNS) stack of the scaled images,
+            addressed by index_image.
+        index_image_pairs: (n_pairs, 2) array; row index_pair holds the two
+            index_image values of that couple, both in [0, n). They are
+            positions in this stack, never index_image_in_archive values.
+        distances: (n_pairs,) scaled target distance, one per index_pair.
     """
 
-    def __init__(self, images, pair_indices, y):
+    def __init__(self, images, index_image_pairs, distances):
         self.images = images
-        self.pair_indices = pair_indices
-        self.y = y
+        self.index_image_pairs = index_image_pairs
+        self.distances = distances
 
     def __len__(self) -> int:
-        return int(self.pair_indices.shape[0])
+        return int(self.index_image_pairs.shape[0])
 
     @property
     def x_shape(self) -> tuple[int, ...]:
-        """Shape of a single materialized pair, e.g. (2, 120, 840)."""
+        """Shape of a single materialized couple, e.g. (2, 120, 840)."""
         return (2,) + tuple(self.images.shape[1:])
 
-    def gather(self, batch_indices=None):
-        """Materialize pairs as (n, 2, n_rows, n_cols); all pairs if None.
+    def gather(self, index_pair_batch=None):
+        """Materialize couples as (n, 2, n_rows, n_cols); all of them if None.
 
-        This is a plain fancy-index into ``images``, so under jit it runs on
-        the GPU and can be fused into the first layer.
+        ``index_pair_batch`` selects index_pair values. This is a plain
+        fancy-index into ``images``, so under jit it runs on the GPU and can be
+        fused into the first layer.
         """
-        pairs = self.pair_indices
-        if batch_indices is not None:
-            pairs = pairs[batch_indices]
+        pairs = self.index_image_pairs
+        if index_pair_batch is not None:
+            pairs = pairs[index_pair_batch]
         return self.images[pairs]
 
 
@@ -173,83 +219,107 @@ def create_datasets(
     output_scale_range: tuple[float, float] = (0.0, 1.0),
 ):
     """
-    Load image pairs and distances, split into train/validation/test sets.
+    Load image couples and distances, split into train/validation/test sets.
+
+    Images are selected as index_image_in_archive in range(start, stop, step) and
+    stacked in
+    that order, so index_image = (index_image_in_archive - start) // step. Couples are then
+    formed within each time only, and carry index_image values, not index_image_in_archive.
 
     Args:
-        total_number_images: Upper bound for image index range.
-        step: Step size when iterating over image indices.
-        start: Starting index for image range.
+        total_number_images: Upper bound for index_image_in_archive.
+        step: Stride over index_image_in_archive.
+        start: First index_image_in_archive kept. With the year-major ordering of
+            the image labels, start=34 drops the whole year-0 block, which
+            has no distance table.
         data_path: Path to the .npz data file.
-        train_split: Fraction of data to use for training.
-        validation_split: Fraction of data to use for validation.
-        input_scale_range: Target range for linear scaling of x (the image pairs).
+        train_split: Fraction of the couples used for training.
+        validation_split: Fraction of the couples used for validation.
+        input_scale_range: Target range for linear scaling of x (the couples).
         output_scale_range: Target range for linear scaling of y (the distances).
 
     Returns:
         train_dataset, validation_dataset, test_dataset as PairDataset objects
-        sharing one image stack on the GPU. Only the (i, j) index pairs are
-        split, so memory grows with the number of images, not with the (~67x
-        larger) number of pairs.
+        sharing one image stack on the GPU. Only the index_pair rows are split,
+        so memory grows with the number of images, not with the (~67x larger)
+        number of couples.
+
+    With the defaults of main.py: n = 6799 images and
+    n_pairs = 199 * 34**2 + 33**2 = 231133 couples. The split is contiguous and
+    unshuffled over time-ordered couples, hence temporal: train 5-700y,
+    validation 700-855y, test 855-1000y.
     """
-    global_array = np.asarray(_load_array_from_npz(data_path), dtype=np.float32)
-    with open(METADATA_PATH, "rb") as f:
-        metadata = pickle.load(f)
+    packed_images = np.asarray(_load_packed_images(data_path), dtype=np.float32)
+    with open(IMAGE_LABELS_PATH, encoding="utf-8") as f:
+        image_labels = json.load(f)
 
-    n_rows, n_cols = 120, 840
-    expected_length = n_rows * n_cols
-    distance_cache = {}
+    distance_table_cache = {}
 
-    stop = min(total_number_images, len(metadata), global_array.shape[1])
-    used_indices = list(range(start, stop, step))
-    indices_by_year = {}
-    for index in used_indices:
-        indices_by_year.setdefault(metadata[index][1], []).append(index)
+    stop = min(total_number_images, len(image_labels), packed_images.shape[1])
+    used_indices_in_archive = list(range(start, stop, step))
 
-    # global_array column index -> row in the compact image stack below.
-    position = {column: row for row, column in enumerate(used_indices)}
+    indices_in_archive_by_time = {}
+    for index_image_in_archive in used_indices_in_archive:
+        year = image_labels[index_image_in_archive][1]
+        indices_in_archive_by_time.setdefault(year, []).append(index_image_in_archive)
 
-    pair_indices, y = [], []
-    for same_year_indices in indices_by_year.values():
-        for i in same_year_indices:
-            name1, year1 = metadata[i]
-            print(f"Loading pairs for image {i} (year {year1})")
-            for j in same_year_indices:
-                name2, _ = metadata[j]
-                distance = _distance_lookup(name1, name2, year1, distance_cache)
-                pair_indices.append((position[i], position[j]))
-                y.append(float(distance))
+    index_image_of_archive = {
+        index_image_in_archive: index_image
+        for index_image, index_image_in_archive in enumerate(used_indices_in_archive)
+    }
 
-    if not pair_indices:
-        raise ValueError("No same-year image pairs found for the selected range.")
+    index_image_pairs, distances = [], []
+    for year, indices_at_time in indices_in_archive_by_time.items():
+        for index_1_in_archive in indices_at_time:
+            university_1 = image_labels[index_1_in_archive][0]
+            print(f"Loading couples for image {index_1_in_archive} (year {year})")
+            for index_2_in_archive in indices_at_time:
+                university_2 = image_labels[index_2_in_archive][0]
+                distance = _distance_lookup(
+                    university_1, university_2, year, distance_table_cache
+                )
+                index_image_pairs.append(
+                    (index_image_of_archive[index_1_in_archive], index_image_of_archive[index_2_in_archive])
+                )
+                distances.append(float(distance))
 
-    # One copy of each used map: (n_images, n_rows, n_cols).
+    if not index_image_pairs:
+        raise ValueError("No same-time image couples found for the selected range.")
+
     images = (
-        global_array[:expected_length, used_indices]
-        .T.reshape(len(used_indices), n_rows, n_cols)
+        packed_images[:N_PIXELS_PER_IMAGE, used_indices_in_archive]
+        .T.reshape(len(used_indices_in_archive), N_IMAGE_ROWS, N_IMAGE_COLUMNS)
     )
-    pair_indices = np.array(pair_indices, dtype=np.int32)
-    y = np.array(y, dtype=np.float32)
+    index_image_pairs = np.array(index_image_pairs, dtype=np.int32)
+    distances = np.array(distances, dtype=np.float32)
 
-    # Scaling the unique images is equivalent to scaling the assembled pair
-    # tensor: the pairs contain exactly these images, and duplicates cannot
-    # change a min or a max.
-    images, y = scale_data(images, y, input_scale_range, output_scale_range)
+    images, distances = scale_data(
+        images, distances, input_scale_range, output_scale_range
+    )
 
     (
-        pair_indices_train,
-        y_train,
-        pair_indices_validation,
-        y_validation,
-        pair_indices_test,
-        y_test,
-    ) = split_data(pair_indices, y, train_split, validation_split)
+        index_image_pairs_train,
+        distances_train,
+        index_image_pairs_validation,
+        distances_validation,
+        index_image_pairs_test,
+        distances_test,
+    ) = split_data(index_image_pairs, distances, train_split, validation_split)
 
-    images = jnp.asarray(images)
-
-    return (
-        PairDataset(images, jnp.asarray(pair_indices_train), jnp.asarray(y_train)),
-        PairDataset(
-            images, jnp.asarray(pair_indices_validation), jnp.asarray(y_validation)
-        ),
-        PairDataset(images, jnp.asarray(pair_indices_test), jnp.asarray(y_test)),
+    train_dataset = PairDataset(
+        jnp.asarray(images),
+        jnp.asarray(index_image_pairs_train),
+        jnp.asarray(distances_train),
     )
+    validation_dataset = PairDataset(
+        jnp.asarray(images),
+        jnp.asarray(index_image_pairs_validation),
+        jnp.asarray(distances_validation),
+    )
+    test_dataset = PairDataset(
+        jnp.asarray(images),
+        jnp.asarray(index_image_pairs_test),
+        jnp.asarray(distances_test),
+    )
+
+    return (train_dataset, validation_dataset, test_dataset)
