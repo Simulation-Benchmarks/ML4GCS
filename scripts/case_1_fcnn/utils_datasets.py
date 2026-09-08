@@ -43,9 +43,37 @@ N_IMAGE_COLUMNS = 840
 N_PIXELS_PER_IMAGE = N_IMAGE_ROWS * N_IMAGE_COLUMNS
 
 
-def _linear_scale(data: np.ndarray, feature_range: tuple[float, float]) -> np.ndarray:
-    data_min = data.min()
-    data_max = data.max()
+def _extremes(
+    data: np.ndarray, index_images: np.ndarray | None = None, chunk: int = 256
+) -> tuple[float, float]:
+    """(min, max) of ``data``, or of ``data[index_images]`` without copying it.
+
+    The gather is done in chunks because ``images`` is a few GB and a fancy
+    index over most of it would double the peak host memory.
+    """
+    if index_images is None:
+        return float(data.min()), float(data.max())
+
+    lowest, highest = np.inf, -np.inf
+    for start in range(0, len(index_images), chunk):
+        block = data[index_images[start : start + chunk]]
+        lowest = min(lowest, float(block.min()))
+        highest = max(highest, float(block.max()))
+    return lowest, highest
+
+
+def _linear_scale(
+    data: np.ndarray,
+    feature_range: tuple[float, float],
+    bounds: tuple[float, float] | None = None,
+) -> np.ndarray:
+    """Map ``data`` onto ``feature_range`` in place.
+
+    ``bounds`` is the (min, max) sent to the ends of ``feature_range``, and
+    defaults to the extremes of ``data`` itself. Pass the training extremes to
+    keep the validation and test blocks out of the scaling.
+    """
+    data_min, data_max = _extremes(data) if bounds is None else bounds
     scale = data_max - data_min
     range_min, range_max = feature_range
 
@@ -180,12 +208,39 @@ class PairDataset:
             index_image values of that couple, both in [0, n). They are
             positions in this stack, never index_image_in_archive values.
         distances: (n_pairs,) scaled target distance, one per index_pair.
+        distance_bounds: (min, max) of the unscaled training distances, in kg m,
+            i.e. the two values sent to the ends of ``output_scale_range``.
+        output_scale_range: the range ``distances`` was scaled onto. Together
+            with ``distance_bounds`` it inverts the scaling, see
+            ``unscale_distances``.
     """
 
-    def __init__(self, images, index_image_pairs, distances):
+    def __init__(
+        self,
+        images,
+        index_image_pairs,
+        distances,
+        distance_bounds=None,
+        output_scale_range=(0.0, 1.0),
+    ):
         self.images = images
         self.index_image_pairs = index_image_pairs
         self.distances = distances
+        self.distance_bounds = distance_bounds
+        self.output_scale_range = output_scale_range
+
+    def unscale_distances(self, distances):
+        """Map scaled distances back onto the original W1 values, in kg m."""
+        if self.distance_bounds is None:
+            raise ValueError(
+                "distance_bounds is unknown, so the scaling cannot be inverted."
+            )
+        data_min, data_max = self.distance_bounds
+        range_min, range_max = self.output_scale_range
+        span = range_max - range_min
+        if span == 0:
+            raise ValueError("output_scale_range is degenerate; scaling is not invertible.")
+        return (np.asarray(distances) - range_min) / span * (data_max - data_min) + data_min
 
     def __len__(self) -> int:
         return int(self.index_image_pairs.shape[0])
@@ -206,6 +261,85 @@ class PairDataset:
         if index_pair_batch is not None:
             pairs = pairs[index_pair_batch]
         return self.images[pairs]
+
+
+def _build_pairs_and_distances(used_indices_in_archive, image_labels, verbose=True):
+    """Same-time couples and their unscaled W1 distances, in kg m.
+
+    Split out of ``create_datasets`` so the targets can be rebuilt on their own,
+    without reading the multi-GB image archive.
+
+    Returns:
+        index_image_pairs: (n_pairs, 2) int32, positions in the image stack.
+        distances: (n_pairs,) float32, the unscaled distances, in kg m.
+    """
+    distance_table_cache = {}
+
+    indices_in_archive_by_time = {}
+    for index_image_in_archive in used_indices_in_archive:
+        year = image_labels[index_image_in_archive][1]
+        indices_in_archive_by_time.setdefault(year, []).append(index_image_in_archive)
+
+    index_image_of_archive = {
+        index_image_in_archive: index_image
+        for index_image, index_image_in_archive in enumerate(used_indices_in_archive)
+    }
+
+    index_image_pairs, distances = [], []
+    for year, indices_at_time in indices_in_archive_by_time.items():
+        for index_1_in_archive in indices_at_time:
+            university_1 = image_labels[index_1_in_archive][0]
+            if verbose:
+                print(f"Loading couples for image {index_1_in_archive} (year {year})")
+            for index_2_in_archive in indices_at_time:
+                university_2 = image_labels[index_2_in_archive][0]
+                distance = _distance_lookup(
+                    university_1, university_2, year, distance_table_cache
+                )
+                index_image_pairs.append(
+                    (
+                        index_image_of_archive[index_1_in_archive],
+                        index_image_of_archive[index_2_in_archive],
+                    )
+                )
+                distances.append(float(distance))
+
+    if not index_image_pairs:
+        raise ValueError("No same-time image couples found for the selected range.")
+
+    return (
+        np.array(index_image_pairs, dtype=np.int32),
+        np.array(distances, dtype=np.float32),
+    )
+
+
+def training_distance_bounds(
+    total_number_images: int = 45,
+    step: int = 1,
+    start: int = 35,
+    train_split: float = TRAIN_SPLIT,
+    validation_split: float = VALIDATION_SPLIT,
+) -> tuple[float, float]:
+    """(min, max) of the unscaled training distances, in kg m.
+
+    These are the two values ``create_datasets`` sends to the ends of
+    ``output_scale_range``, so they invert the target scaling. Pass the same
+    arguments ``create_datasets`` was called with. Only the distance tables are
+    read, so this is cheap and needs no trained model.
+    """
+    with open(IMAGE_LABELS_PATH, encoding="utf-8") as f:
+        image_labels = json.load(f)
+
+    stop = min(total_number_images, len(image_labels))
+    used_indices_in_archive = list(range(start, stop, step))
+
+    index_image_pairs, distances = _build_pairs_and_distances(
+        used_indices_in_archive, image_labels, verbose=False
+    )
+    _, distances_train, _, _, _, _ = split_data(
+        index_image_pairs, distances, train_split, validation_split
+    )
+    return _extremes(distances_train)
 
 
 def create_datasets(
@@ -253,48 +387,16 @@ def create_datasets(
     with open(IMAGE_LABELS_PATH, encoding="utf-8") as f:
         image_labels = json.load(f)
 
-    distance_table_cache = {}
-
     stop = min(total_number_images, len(image_labels), packed_images.shape[1])
     used_indices_in_archive = list(range(start, stop, step))
 
-    indices_in_archive_by_time = {}
-    for index_image_in_archive in used_indices_in_archive:
-        year = image_labels[index_image_in_archive][1]
-        indices_in_archive_by_time.setdefault(year, []).append(index_image_in_archive)
-
-    index_image_of_archive = {
-        index_image_in_archive: index_image
-        for index_image, index_image_in_archive in enumerate(used_indices_in_archive)
-    }
-
-    index_image_pairs, distances = [], []
-    for year, indices_at_time in indices_in_archive_by_time.items():
-        for index_1_in_archive in indices_at_time:
-            university_1 = image_labels[index_1_in_archive][0]
-            print(f"Loading couples for image {index_1_in_archive} (year {year})")
-            for index_2_in_archive in indices_at_time:
-                university_2 = image_labels[index_2_in_archive][0]
-                distance = _distance_lookup(
-                    university_1, university_2, year, distance_table_cache
-                )
-                index_image_pairs.append(
-                    (index_image_of_archive[index_1_in_archive], index_image_of_archive[index_2_in_archive])
-                )
-                distances.append(float(distance))
-
-    if not index_image_pairs:
-        raise ValueError("No same-time image couples found for the selected range.")
+    index_image_pairs, distances = _build_pairs_and_distances(
+        used_indices_in_archive, image_labels
+    )
 
     images = (
         packed_images[:N_PIXELS_PER_IMAGE, used_indices_in_archive]
         .T.reshape(len(used_indices_in_archive), N_IMAGE_ROWS, N_IMAGE_COLUMNS)
-    )
-    index_image_pairs = np.array(index_image_pairs, dtype=np.int32)
-    distances = np.array(distances, dtype=np.float32)
-
-    images, distances = scale_data(
-        images, distances, input_scale_range, output_scale_range
     )
 
     (
@@ -306,20 +408,38 @@ def create_datasets(
         distances_test,
     ) = split_data(index_image_pairs, distances, train_split, validation_split)
 
+    # Scale after splitting, from the training block alone. Taking the extremes
+    # over every couple would let the validation and test images and targets set
+    # the ranges, which is the leak the split exists to prevent. The three
+    # distances_* are views into distances, so rescaling the parent rescales all
+    # of them; the bounds are read before that write.
+    image_bounds = _extremes(images, np.unique(index_image_pairs_train))
+    distance_bounds = _extremes(distances_train)
+    _linear_scale(images, input_scale_range, image_bounds)
+    _linear_scale(distances, output_scale_range, distance_bounds)
+
+    images_device = jnp.asarray(images)
+
     train_dataset = PairDataset(
-        jnp.asarray(images),
+        images_device,
         jnp.asarray(index_image_pairs_train),
         jnp.asarray(distances_train),
+        distance_bounds=distance_bounds,
+        output_scale_range=output_scale_range,
     )
     validation_dataset = PairDataset(
-        jnp.asarray(images),
+        images_device,
         jnp.asarray(index_image_pairs_validation),
         jnp.asarray(distances_validation),
+        distance_bounds=distance_bounds,
+        output_scale_range=output_scale_range,
     )
     test_dataset = PairDataset(
-        jnp.asarray(images),
+        images_device,
         jnp.asarray(index_image_pairs_test),
         jnp.asarray(distances_test),
+        distance_bounds=distance_bounds,
+        output_scale_range=output_scale_range,
     )
 
     return (train_dataset, validation_dataset, test_dataset)

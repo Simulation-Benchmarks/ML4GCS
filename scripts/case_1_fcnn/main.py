@@ -60,8 +60,8 @@ if __name__ == "__main__":
     params = model.initialize_model(layer_widths, seed=seed)
 
     # train using Adam
-    lr = 1e-2
-    epochs_tot = 100
+    lr = 1e-4
+    epochs_tot = 30
     batch_size = 128
     optimizer = optax.adam(lr)
 
@@ -84,6 +84,8 @@ if __name__ == "__main__":
         images=np.asarray(test_dataset.images),
         index_image_pairs_test=np.asarray(test_dataset.index_image_pairs),
         y_test=np.asarray(test_dataset.distances),
+        distance_bounds=np.asarray(test_dataset.distance_bounds, dtype=np.float64),
+        output_scale_range=np.asarray(test_dataset.output_scale_range, dtype=np.float64),
     )
 
     print("\nTraining finished")

@@ -109,6 +109,22 @@ def plot_loss_history(
     plt.close(fig)
 
 
+def plot_r_squared(y_pred, y_test, r2, output_path):
+    fig, ax = plt.subplots(figsize=(9, 9))
+    ax.scatter(y_test, y_pred, s=10, alpha=0.5, color="0.3", edgecolors="none")
+    lo = float(min(y_test.min(), y_pred.min()))
+    hi = float(max(y_test.max(), y_pred.max()))
+    ax.plot([lo, hi], [lo, hi], color="0.0", linestyle="--", linewidth=1)
+    ax.set_xlabel("Target")
+    ax.set_ylabel("Prediction")
+    ax.set_title(f"$R^2$ = {r2:.4f}")
+    fig.tight_layout()
+    output_path = Path(output_path)
+    fig.savefig(output_path.with_suffix(".pdf"), format="pdf")
+    fig.savefig(output_path.with_suffix(".png"), format="png", dpi=300, bbox_inches="tight")
+    plt.close(fig)
+
+
 def main():
     base_dir = Path(__file__).resolve().parent
     results_dir = base_dir / "results"
