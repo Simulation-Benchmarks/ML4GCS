@@ -121,6 +121,47 @@ def _distance_lookup(
     return row[col_name]
 
 
+class PairDataset:
+    """Same-year image pairs held as (i, j) indices into a shared image stack.
+
+    ``images`` stores each used map exactly once, so the pair tensor is only
+    materialized by ``gather``, one batch at a time, on whatever device
+    ``images`` lives on. Storing the pairs directly instead would write every
+    image once per pair it appears in -- about 2 * len(self) / n_images copies,
+    ~67x for the SPE11B maps (0.39 GB of images -> a 26 GB pair tensor for 966
+    images), which is what used to exhaust host RAM.
+
+    Attributes:
+        images: (n_images, n_rows, n_cols) stack of the scaled maps.
+        pair_indices: (n_pairs, 2) rows into ``images``.
+        y: (n_pairs,) scaled target distance per pair.
+    """
+
+    def __init__(self, images, pair_indices, y):
+        self.images = images
+        self.pair_indices = pair_indices
+        self.y = y
+
+    def __len__(self) -> int:
+        return int(self.pair_indices.shape[0])
+
+    @property
+    def x_shape(self) -> tuple[int, ...]:
+        """Shape of a single materialized pair, e.g. (2, 120, 840)."""
+        return (2,) + tuple(self.images.shape[1:])
+
+    def gather(self, batch_indices=None):
+        """Materialize pairs as (n, 2, n_rows, n_cols); all pairs if None.
+
+        This is a plain fancy-index into ``images``, so under jit it runs on
+        the GPU and can be fused into the first layer.
+        """
+        pairs = self.pair_indices
+        if batch_indices is not None:
+            pairs = pairs[batch_indices]
+        return self.images[pairs]
+
+
 def create_datasets(
     total_number_images: int = 45,
     step: int = 1,
@@ -145,51 +186,70 @@ def create_datasets(
         output_scale_range: Target range for linear scaling of y (the distances).
 
     Returns:
-        x_train, y_train, x_validation, y_validation, x_test, y_test as JAX arrays.
+        train_dataset, validation_dataset, test_dataset as PairDataset objects
+        sharing one image stack on the GPU. Only the (i, j) index pairs are
+        split, so memory grows with the number of images, not with the (~67x
+        larger) number of pairs.
     """
     global_array = np.asarray(_load_array_from_npz(data_path), dtype=np.float32)
     with open(METADATA_PATH, "rb") as f:
         metadata = pickle.load(f)
 
-    x, y = [], []
     n_rows, n_cols = 120, 840
     expected_length = n_rows * n_cols
     distance_cache = {}
 
     stop = min(total_number_images, len(metadata), global_array.shape[1])
+    used_indices = list(range(start, stop, step))
     indices_by_year = {}
-    for index in range(start, stop, step):
+    for index in used_indices:
         indices_by_year.setdefault(metadata[index][1], []).append(index)
 
+    # global_array column index -> row in the compact image stack below.
+    position = {column: row for row, column in enumerate(used_indices)}
+
+    pair_indices, y = [], []
     for same_year_indices in indices_by_year.values():
         for i in same_year_indices:
             name1, year1 = metadata[i]
-            img1 = global_array[:expected_length, i].reshape((n_rows, n_cols))
+            print(f"Loading pairs for image {i} (year {year1})")
             for j in same_year_indices:
                 name2, _ = metadata[j]
-                img2 = global_array[:expected_length, j].reshape((n_rows, n_cols))
                 distance = _distance_lookup(name1, name2, year1, distance_cache)
-
-                print(f"Loading pair ({i}, {j})")
-                x.append(np.stack([img1, img2]))
+                pair_indices.append((position[i], position[j]))
                 y.append(float(distance))
 
-    if not x:
+    if not pair_indices:
         raise ValueError("No same-year image pairs found for the selected range.")
 
-    x = np.array(x, dtype=np.float32)
-    y = np.array(y, dtype=np.float32)
-    x, y = scale_data(x, y, input_scale_range, output_scale_range)
-
-    x_train, y_train, x_validation, y_validation, x_test, y_test = split_data(
-        x, y, train_split, validation_split
+    # One copy of each used map: (n_images, n_rows, n_cols).
+    images = (
+        global_array[:expected_length, used_indices]
+        .T.reshape(len(used_indices), n_rows, n_cols)
     )
+    pair_indices = np.array(pair_indices, dtype=np.int32)
+    y = np.array(y, dtype=np.float32)
+
+    # Scaling the unique images is equivalent to scaling the assembled pair
+    # tensor: the pairs contain exactly these images, and duplicates cannot
+    # change a min or a max.
+    images, y = scale_data(images, y, input_scale_range, output_scale_range)
+
+    (
+        pair_indices_train,
+        y_train,
+        pair_indices_validation,
+        y_validation,
+        pair_indices_test,
+        y_test,
+    ) = split_data(pair_indices, y, train_split, validation_split)
+
+    images = jnp.asarray(images)
 
     return (
-        jnp.array(x_train),
-        jnp.array(y_train),
-        jnp.array(x_validation),
-        jnp.array(y_validation),
-        jnp.array(x_test),
-        jnp.array(y_test),
+        PairDataset(images, jnp.asarray(pair_indices_train), jnp.asarray(y_train)),
+        PairDataset(
+            images, jnp.asarray(pair_indices_validation), jnp.asarray(y_validation)
+        ),
+        PairDataset(images, jnp.asarray(pair_indices_test), jnp.asarray(y_test)),
     )

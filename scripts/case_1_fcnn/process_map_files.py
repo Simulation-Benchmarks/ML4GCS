@@ -98,6 +98,13 @@ def main():
 
             column_data = pd.to_numeric(df[col_name], errors="coerce").to_numpy()
             column_data = np.nan_to_num(column_data, nan=0.0)
+            # Store as float32: the maps are CO2 masses that don't need float64
+            # precision, and float32 halves the on-disk .npz and the host-RAM
+            # footprint of global_array (~2.75 GB instead of ~5.5 GB for the full
+            # 100800 x 6833 array). utils_datasets already casts to float32 on
+            # load, so this just moves the cast upstream and avoids a transient
+            # double allocation there.
+            column_data = column_data.astype(np.float32)
             data_list.append(column_data)
 
             # Parse metadata

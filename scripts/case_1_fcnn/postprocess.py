@@ -2,6 +2,7 @@ from pdb import set_trace as st
 from pathlib import Path
 
 import numpy as np
+import jax.numpy as jnp
 
 import matplotlib
 
@@ -11,12 +12,23 @@ import matplotlib.pyplot as plt
 plt.rcParams.update({"text.usetex": True, "font.family": "serif"})
 
 import model
+import utils_datasets
 import utils_nn
 
 
-def compute_test_metrics(params, x_test, y_test):
-    y_pred = np.asarray(model.forward(params, x_test)).squeeze(axis=-1)
-    y_test = np.asarray(y_test, dtype=y_pred.dtype)
+def compute_test_metrics(params, test_dataset, batch_size=256):
+    """Metrics over a PairDataset, gathering pairs on the GPU in batches so the
+    full pair tensor is never materialized."""
+    n_pairs = len(test_dataset)
+    y_pred = np.concatenate(
+        [
+            np.asarray(
+                model.forward(params, test_dataset.gather(slice(start, start + batch_size)))
+            ).squeeze(axis=-1)
+            for start in range(0, n_pairs, batch_size)
+        ]
+    )
+    y_test = np.asarray(test_dataset.y, dtype=y_pred.dtype)
 
     discrepancy = y_pred - y_test
 
@@ -58,10 +70,13 @@ def main():
 
     params = utils_nn.load_params(params_path)
     with np.load(test_dataset_path) as data:
-        x_test = data["x_test"]
-        y_test = data["y_test"]
+        test_dataset = utils_datasets.PairDataset(
+            jnp.asarray(data["images"]),
+            jnp.asarray(data["pair_indices_test"]),
+            jnp.asarray(data["y_test"]),
+        )
 
-    metrics, y_pred, y_test = compute_test_metrics(params, x_test, y_test)
+    metrics, y_pred, y_test = compute_test_metrics(params, test_dataset)
 
     metrics_lines = [
         f"Normalized Mean Squared Error (NMSE): {metrics['nmse']:.6e}",
