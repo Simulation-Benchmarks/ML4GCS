@@ -6,11 +6,17 @@ from dataclasses import dataclass
 import csv
 import re
 from pathlib import Path
+from typing import Callable
 
 import numpy as np
 
 
-SPATIAL_MAP_TIME_RE = re.compile(r"^spe11b_spatial_map_(?P<time>-?\d+(?:\.\d+)?)y\.csv$")
+SPE11B_SPATIAL_MAP_TIME_RE = re.compile(
+    r"^spe11b_spatial_map_(?P<time>-?\d+(?:\.\d+)?)y\.csv$"
+)
+FLUIDFLOWER_SPATIAL_MAP_TIME_RE = re.compile(
+    r"^ml4gcs_spatial_map_(?P<hours>\d+)_(?P<minutes>\d{2})\.csv$"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,14 +80,37 @@ class SpatialMapSnapshot:
         return grid
 
 
-def parse_spatial_map_time(path: Path | str) -> float:
-    """Extract the time encoded in a spatial-map filename."""
+def parse_spatial_map_time(
+    path: Path | str,
+    *,
+    filename_regex: re.Pattern[str] = SPE11B_SPATIAL_MAP_TIME_RE,
+    time_group: str = "time",
+) -> float:
+    """Extract the time encoded in a spatial-map filename using a regex pattern."""
 
     filename = Path(path).name
-    match = SPATIAL_MAP_TIME_RE.match(filename)
+    match = filename_regex.match(filename)
     if not match:
         raise ValueError(f"Not a spatial-map filename: {filename}")
-    return float(match.group("time"))
+    if time_group in match.groupdict():
+        return float(match.group(time_group))
+    if len(match.groups()) == 1:
+        return float(match.group(1))
+    raise ValueError(
+        f"Could not find time group '{time_group}' in filename pattern for {filename}"
+    )
+
+
+def parse_fluidflower_spatial_map_time(path: Path | str) -> float:
+    """Extract FluidFlower snapshot time in hours from ``ml4gcs_spatial_map_HH_MM.csv``."""
+
+    filename = Path(path).name
+    match = FLUIDFLOWER_SPATIAL_MAP_TIME_RE.match(filename)
+    if not match:
+        raise ValueError(f"Not a FluidFlower spatial-map filename: {filename}")
+    hours = int(match.group("hours"))
+    minutes = int(match.group("minutes"))
+    return float(hours) + float(minutes) / 60.0
 
 
 def _read_header_and_rows(path: Path) -> tuple[tuple[str, ...], np.ndarray]:
@@ -95,13 +124,17 @@ def _read_header_and_rows(path: Path) -> tuple[tuple[str, ...], np.ndarray]:
     return header, np.asarray(rows, dtype=np.float64)
 
 
-def load_spatial_map_csv(path: Path | str) -> SpatialMapSnapshot:
-    """Load one SPE11B spatial-map CSV file."""
+def load_spatial_map_csv(
+    path: Path | str,
+    *,
+    time_parser: Callable[[Path | str], float] = parse_spatial_map_time,
+) -> SpatialMapSnapshot:
+    """Load one spatial-map CSV file."""
 
     csv_path = Path(path)
     header, data = _read_header_and_rows(csv_path)
     participant = csv_path.parent.name
-    time_years = parse_spatial_map_time(csv_path)
+    time_years = time_parser(csv_path)
     return SpatialMapSnapshot(
         participant=participant,
         time_years=time_years,
@@ -109,4 +142,3 @@ def load_spatial_map_csv(path: Path | str) -> SpatialMapSnapshot:
         columns=header,
         data=data,
     )
-

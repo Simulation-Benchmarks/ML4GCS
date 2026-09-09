@@ -10,37 +10,6 @@ from typing import Any
 import numpy as np
 
 
-def pressure_l2_distance(prediction: np.ndarray, target: np.ndarray) -> float:
-    """Return the L2 distance between two pressure fields."""
-
-    prediction = np.asarray(prediction, dtype=np.float64)
-    target = np.asarray(target, dtype=np.float64)
-    if prediction.shape != target.shape:
-        raise ValueError(f"Shape mismatch: {prediction.shape} vs {target.shape}")
-    return float(np.linalg.norm(prediction - target))
-
-
-def pressure_relative_l2_distance(prediction: np.ndarray, target: np.ndarray) -> float:
-    """Return the relative L2 distance between two pressure fields."""
-
-    prediction = np.asarray(prediction, dtype=np.float64)
-    target = np.asarray(target, dtype=np.float64)
-    denom = float(np.linalg.norm(target))
-    if denom == 0.0:
-        return pressure_l2_distance(prediction, target)
-    return pressure_l2_distance(prediction, target) / denom
-
-
-def pressure_rmse(prediction: np.ndarray, target: np.ndarray) -> float:
-    """Return the root-mean-square error between two pressure fields."""
-
-    prediction = np.asarray(prediction, dtype=np.float64)
-    target = np.asarray(target, dtype=np.float64)
-    if prediction.shape != target.shape:
-        raise ValueError(f"Shape mismatch: {prediction.shape} vs {target.shape}")
-    return float(np.sqrt(np.mean((prediction - target) ** 2)))
-
-
 def count_parameters(model: Any, trainable_only: bool = True) -> int:
     """Count parameters in a model-like object.
 

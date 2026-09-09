@@ -1,53 +1,57 @@
 """Data loading helpers for SPE11B."""
 
-from .discovery import discover_spatial_map_paths, find_spe11b_data_root
-from .dataset import (
-    COORDINATE_COLUMNS,
-    SpatialMapTransition,
-    SpatialMapTransitionBatch,
-    SpatialMapTransitionDataset,
-    build_spatial_map_transition_batch,
+from .discovery import (
+    discover_fluidflower_spatial_map_paths,
+    discover_spatial_map_paths,
+    find_data_root,
+    find_fluidflower_data_root,
+    find_spe11b_data_root,
 )
-from .export import (
-    export_next_step_timeline,
-    export_next_step_timeline_data,
-    export_participant_timeline,
-    save_spatial_map_csv,
-    save_spatial_map_csv_data,
+from .spatial_map import (
+    FLUIDFLOWER_SPATIAL_MAP_TIME_RE,
+    SPE11B_SPATIAL_MAP_TIME_RE,
+    SpatialMapSnapshot,
+    load_spatial_map_csv,
+    parse_fluidflower_spatial_map_time,
+    parse_spatial_map_time,
+)
+from .wasserstein import (
+    MapRecord,
+    PairRecord,
+    WassersteinDataset,
+    WassersteinDistanceStore,
+    build_pair_dataset,
+    load_wasserstein_arrays,
+    load_map_values,
+    parse_spe11b_time,
+    read_map_records,
+    save_wasserstein_dataset,
 )
 from .index import SpatialMapRef, build_spatial_map_index, group_spatial_map_index
-from .normalization import (
-    FeatureNormalizer,
-    fit_feature_normalizer,
-)
-from .series import ParticipantSeries, load_spatial_map_series
-from .splits import IndexSubset, make_subsets, split_indices
-from .spatial_map import SpatialMapSnapshot, load_spatial_map_csv, parse_spatial_map_time
 
 __all__ = [
-    "ParticipantSeries",
-    "COORDINATE_COLUMNS",
-    "FeatureNormalizer",
-    "export_next_step_timeline",
-    "export_next_step_timeline_data",
-    "export_participant_timeline",
-    "IndexSubset",
+    "FLUIDFLOWER_SPATIAL_MAP_TIME_RE",
+    "find_data_root",
+    "find_fluidflower_data_root",
+    "SPE11B_SPATIAL_MAP_TIME_RE",
     "SpatialMapSnapshot",
     "SpatialMapRef",
-    "SpatialMapTransition",
-    "SpatialMapTransitionBatch",
-    "SpatialMapTransitionDataset",
     "build_spatial_map_index",
-    "build_spatial_map_transition_batch",
+    "discover_fluidflower_spatial_map_paths",
     "discover_spatial_map_paths",
     "find_spe11b_data_root",
-    "fit_feature_normalizer",
     "group_spatial_map_index",
     "load_spatial_map_csv",
-    "load_spatial_map_series",
-    "make_subsets",
+    "parse_fluidflower_spatial_map_time",
     "parse_spatial_map_time",
-    "split_indices",
-    "save_spatial_map_csv",
-    "save_spatial_map_csv_data",
+    "MapRecord",
+    "PairRecord",
+    "WassersteinDataset",
+    "WassersteinDistanceStore",
+    "build_pair_dataset",
+    "load_map_values",
+    "load_wasserstein_arrays",
+    "parse_spe11b_time",
+    "read_map_records",
+    "save_wasserstein_dataset",
 ]

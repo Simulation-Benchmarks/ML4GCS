@@ -23,10 +23,7 @@ if __name__ == "__main__":
         x_test,
         y_test,
     ) = utils_datasets.create_datasets(
-        total_number_images=60,
-        step=1,
-        start=35,
-        data_path=base_dir / "spe11b_tmco2_dt50y.npz",
+        data_path=base_dir / "wasserstein_pairs.npz",
         scale_range=(0, 1),
     )
 
