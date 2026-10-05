@@ -13,9 +13,7 @@ def test_scaling_dataset():
     x = np.array([0.0, 2.5, 5.0, 7.5, 10.0], dtype=np.float32)
     y = np.array([2.0, 3.0, 4.0, 5.0, 6.0], dtype=np.float32)
 
-    x, y = utils_datasets.scale_data(
-        x, y, input_scale_range=scale_range, output_scale_range=scale_range
-    )
+    x, y = utils_datasets.scale_data(x, y, feature_range=scale_range)
 
     np.testing.assert_allclose(x, [-1.0, -0.5, 0.0, 0.5, 1.0])
     np.testing.assert_allclose(y, [-1.0, -0.5, 0.0, 0.5, 1.0])
@@ -98,39 +96,6 @@ def test_loss_positive_for_wrong_prediction():
     assert float(train.loss_fn(params, x, y)) > 0.0
 
 
-def _pair_dataset(pair_values, distances):
-    """PairDataset whose gathered pairs equal `pair_values`, one 1-pixel image
-    per entry, so a gathered pair flattens to a length-2 model input."""
-    flat = [value for pair in pair_values for value in pair]
-    images = jnp.array(flat, dtype=jnp.float32).reshape(len(flat), 1)
-    index_image_pairs = jnp.arange(len(flat), dtype=jnp.int32).reshape(
-        len(pair_values), 2
-    )
-    return utils_datasets.PairDataset(
-        images, index_image_pairs, jnp.array(distances, dtype=jnp.float32)
-    )
-
-
-def test_pair_dataset_gathers_without_duplicating():
-    images = jnp.arange(12, dtype=jnp.float32).reshape(3, 2, 2)
-    index_image_pairs = jnp.array([[0, 1], [1, 2], [0, 2], [2, 0]], dtype=jnp.int32)
-    dataset = utils_datasets.PairDataset(images, index_image_pairs, jnp.zeros(4))
-
-    pairs = dataset.gather()
-
-    assert len(dataset) == 4
-    assert dataset.x_shape == (2, 2, 2)
-    assert pairs.shape == (4, 2, 2, 2)
-    # Each pair is the right two images, and the stack itself never grew.
-    for index_pair, (index_image_1, index_image_2) in enumerate(
-        np.asarray(index_image_pairs)
-    ):
-        np.testing.assert_allclose(pairs[index_pair, 0], images[index_image_1])
-        np.testing.assert_allclose(pairs[index_pair, 1], images[index_image_2])
-    assert images.shape[0] == 3
-    np.testing.assert_allclose(dataset.gather(slice(1, 3)), pairs[1:3])
-
-
 def test_postprocess_metrics():
     params = {
         "layer_0": {
@@ -138,38 +103,28 @@ def test_postprocess_metrics():
             "b": jnp.array([0.0], dtype=jnp.float32),
         }
     }
-    test_dataset = _pair_dataset([(0.25, 0.75), (0.2, 0.7)], [1.0, 1.0])
+    x_test = jnp.array([[0.25, 0.75], [0.2, 0.7]], dtype=jnp.float32)
+    y_test = jnp.array([1.0, 1.0], dtype=jnp.float32)
 
-    metrics, _, _ = postprocess.compute_test_metrics(params, test_dataset)
+    metrics = postprocess.compute_test_metrics(params, x_test, y_test)
 
-    np.testing.assert_allclose(metrics["nmse"], 0.005, atol=1e-7)
-    np.testing.assert_allclose(metrics["nrmse"], np.sqrt(0.005), atol=1e-7)
-    np.testing.assert_allclose(metrics["nmae"], 0.05, atol=1e-7)
+    np.testing.assert_allclose(metrics["mse"], 0.005, atol=1e-7)
+    np.testing.assert_allclose(metrics["rmse"], np.sqrt(0.005), atol=1e-7)
+    np.testing.assert_allclose(metrics["mae"], 0.05, atol=1e-7)
     assert "accuracy" not in metrics
 
 
-def test_postprocess_metrics_batching_is_exact():
-    """Batched inference must give the same metrics as a single forward pass."""
-    params = model.initialize_model([2, 3, 1], seed=0)
-    pair_values = [(0.1 * i, 0.2 * i) for i in range(7)]
-    dataset = _pair_dataset(pair_values, [0.3 * i for i in range(7)])
-
-    full, y_pred_full, _ = postprocess.compute_test_metrics(params, dataset, batch_size=64)
-    split, y_pred_split, _ = postprocess.compute_test_metrics(params, dataset, batch_size=2)
-
-    np.testing.assert_allclose(y_pred_full, y_pred_split, rtol=1e-6)
-    for key in full:
-        np.testing.assert_allclose(full[key], split[key], rtol=1e-6)
-
-
 def test_train_model_records_losses():
-    dataset = _pair_dataset([(1.0, 0.0)], [1.0])
+    x = jnp.array([[1.0, 0.0]], dtype=jnp.float32)
+    y = jnp.array([1.0], dtype=jnp.float32)
     params = model.initialize_model([2, 1], seed=0)
 
     _, loss_epochs, loss_train, loss_validation = train.train_model(
         params,
-        dataset,
-        dataset,
+        x,
+        y,
+        x,
+        y,
         optimizer=optax.adam(0.01),
         epochs_tot=5,
         test_spacing=2,
@@ -181,50 +136,25 @@ def test_train_model_records_losses():
 
 
 def test_train_single_input():
-    dataset = _pair_dataset([(0.25, -0.75)], [0.5])
+    x = jnp.array([[0.25, -0.75]], dtype=jnp.float32)
+    y = jnp.array([0.5], dtype=jnp.float32)
     params = model.initialize_model([2, 1], seed=0)
 
     params, _, loss_train, loss_validation = train.train_model(
         params,
-        dataset,
-        dataset,
+        x,
+        y,
+        x,
+        y,
         optimizer=optax.adam(0.1),
         epochs_tot=300,
         test_spacing=299,
     )
 
-    final_loss = float(
-        train.pair_loss_fn(
-            params, dataset.images, dataset.index_image_pairs, dataset.distances
-        )
-    )
+    final_loss = float(train.loss_fn(params, x, y))
     assert final_loss < 1e-8
     assert loss_train[-1] < loss_train[0]
     assert loss_validation[-1] < loss_validation[0]
-
-
-def test_minibatch_training_matches_full_batch_loss():
-    """Minibatching must cover every pair: same data, same starting loss."""
-    pair_values = [(0.1 * i, -0.05 * i) for i in range(10)]
-    targets = [0.2 * i for i in range(10)]
-    dataset = _pair_dataset(pair_values, targets)
-    params = model.initialize_model([2, 4, 1], seed=0)
-
-    _, _, full_loss, _ = train.train_model(
-        params, dataset, dataset, optimizer=optax.adam(0.0), epochs_tot=1, test_spacing=1
-    )
-    _, _, mini_loss, _ = train.train_model(
-        params,
-        dataset,
-        dataset,
-        optimizer=optax.adam(0.0),
-        epochs_tot=1,
-        test_spacing=1,
-        batch_size=3,
-    )
-
-    # lr 0 means params never move, so both must report the same mean loss.
-    np.testing.assert_allclose(full_loss[0], mini_loss[0], rtol=1e-5)
 
 
 def run_tests():
@@ -236,12 +166,9 @@ def run_tests():
         test_forward_output_shape,
         test_loss_zero_for_exact_prediction,
         test_loss_positive_for_wrong_prediction,
-        test_pair_dataset_gathers_without_duplicating,
         test_postprocess_metrics,
-        test_postprocess_metrics_batching_is_exact,
         test_train_model_records_losses,
         test_train_single_input,
-        test_minibatch_training_matches_full_batch_loss,
     )
 
     for test in tests:

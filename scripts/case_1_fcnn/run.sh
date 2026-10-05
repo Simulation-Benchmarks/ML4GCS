@@ -2,10 +2,6 @@
 
 set -e
 
-export XLA_PYTHON_CLIENT_PREALLOCATE=false
-export XLA_PYTHON_CLIENT_MEM_FRACTION=0.9
-export XLA_PYTHON_CLIENT_ALLOCATOR=platform
-
 rm -rf results
 mkdir results
 
@@ -15,6 +11,6 @@ python3 -u process_map_files.py
 python3 -u main.py
 
 python3 -u postprocess.py
-python3 plot_postprocess.py
+python3 plot_loss.py
 
 

@@ -31,9 +31,7 @@ def test_scaling_dataset():
     x = np.array([0.0, 2.5, 5.0, 7.5, 10.0], dtype=np.float32)
     y = np.array([2.0, 3.0, 4.0, 5.0, 6.0], dtype=np.float32)
 
-    x, y = utils_datasets.scale_data(
-        x, y, input_scale_range=scale_range, output_scale_range=scale_range
-    )
+    x, y = utils_datasets.scale_data(x, y, feature_range=scale_range)
 
     np.testing.assert_allclose(x, [-1.0, -0.5, 0.0, 0.5, 1.0])
     np.testing.assert_allclose(y, [-1.0, -0.5, 0.0, 0.5, 1.0])
@@ -147,9 +145,9 @@ def test_postprocess_metrics():
 
     metrics = postprocess.compute_test_metrics(params, x_test, y_test)
 
-    np.testing.assert_allclose(metrics["nmse"], 0.2, atol=1e-7)
-    np.testing.assert_allclose(metrics["nrmse"], 1.0 / np.sqrt(5.0), atol=1e-7)
-    np.testing.assert_allclose(metrics["nmae"], 1.0 / 3.0, atol=1e-7)
+    np.testing.assert_allclose(metrics["mse"], 0.2, atol=1e-7)
+    np.testing.assert_allclose(metrics["rmse"], 1.0 / np.sqrt(5.0), atol=1e-7)
+    np.testing.assert_allclose(metrics["mae"], 1.0 / 3.0, atol=1e-7)
     assert "accuracy" not in metrics
 
 

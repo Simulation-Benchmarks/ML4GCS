@@ -27,8 +27,7 @@ if __name__ == "__main__":
         step=1,
         start=35,
         data_path=base_dir / "spe11b_tmco2_dt50y.npz",
-        input_scale_range=(0, 1),
-        output_scale_range=(0, 1),
+        scale_range=(0, 1),
     )
 
     seed = 0
