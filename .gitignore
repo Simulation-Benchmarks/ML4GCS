@@ -26,6 +26,7 @@ spe11b/
 data/raw/
 data/processed/
 data/splits/
+data/spe11b.h5
 
 # OS/editor files
 .DS_Store

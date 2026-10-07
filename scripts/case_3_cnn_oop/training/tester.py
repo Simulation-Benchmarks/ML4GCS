@@ -21,13 +21,13 @@ class Tester:
         targets = []
 
         with torch.no_grad():
-            for x, y in self.test_loader:
-                x = x.to(self.device)
+            for (M, M_tilde), y in self.test_loader:
+                x = torch.stack([M, M_tilde], dim=1).to(self.device)  # 2 channels: M, M̃
 
-                pred = self.model(x)
+                pred = self.model(x).squeeze(1)  # (B, 1) -> (B,), the shape of y
 
                 preds.append(pred.cpu())
-                targets.append(y)
+                targets.append(y.cpu())
 
         preds = torch.cat(preds).numpy()
         targets = torch.cat(targets).numpy()

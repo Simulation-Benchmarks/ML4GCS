@@ -1,10 +1,11 @@
 ## Assumptions
 
-- Python with common libraries (NumPy, JAX, PyTorch, optax, pandas).
-- Memory is limited: each map is stored once, instead of the common practice of storing every input pair explicitly. This requires a preprocessing step and data-management utilities.
-- A pair is an index pair, never a copy of two maps.
-- `spe11b/` is the raw data, never modified.
-- Participants and years are represented by integer indices (see Indexing), not by names (e.g. `calgary1`) or year values (e.g. 50), so that the whole training can be jitted (for JAX users).
+- Python, with common libraries (NumPy, JAX, PyTorch, optax, pandas), for interoperability.
+- Memory is limited: each map is stored once, instead of storing every input pair explicitly, as is common practice. This requires a preprocessing step and data-management utilities.
+- A pair is a pair of indices, never a copy of two maps, to save memory.
+- `spe11b/` holds the raw data and is never modified: this implementation is a layer on top of it, for modularity.
+- Different ML users may use the data differently for training: the data-management logic must be flexible and modular.
+- Participants and years are represented by integer indices (see Indexing), not by names (e.g. `calgary1`) or year values (e.g. 50), so that JAX users can jit the whole training.
 
 
 ## Learning task
@@ -50,7 +51,7 @@ The split is a random partition of the datum indices $q$, in the ratio $0.7 : 0.
 ## Scaling
 - Scalings: $\mathcal{S}_M$ for maps, $\mathcal{S}_d$ for distances. Both invertible.
 
-For example, standardization (as in `scripts/case_3_cnn_oop/data/dataset.py`):
+For example, standardization (as in `case_3_cnn_oop`):
 
 $$
 \mathcal{S}_M(M) = \frac{M - \mu_M}{\sigma_M + \varepsilon},
@@ -160,19 +161,23 @@ $$
 \pi(i) = (k_i, \tilde k_i)
 $$
 
+- $\pi(i) = \left( \lfloor q_i / K \rfloor, \, q_i \bmod K \right)$.
+- $q = K k + \tilde k$: datum index of the sample with unrolled indices $(k, \tilde k)$.
+- $(q_0, \dots, q_{N-1})$: the datum indices of $\mathcal{D}_{\text{train}}$, in random order.
 
 
 **From unrolled index to label:**
 
 
 $$
-\Lambda : \{0, \dots, K-1\} \to \{0, \dots, |\mathcal{P}|-1\} \times \{0, \dots, |\mathcal{T}|-1\},
-\qquad
+\begin{gathered}
+\Lambda : \{0, \dots, K-1\} \to \{0, \dots, |\mathcal{P}|-1\} \times \{0, \dots, |\mathcal{T}|-1\}, \\
 \lambda = \Lambda(k) = (a, b),
 \quad \text{with} \quad
 a = k \bmod |\mathcal{P}|,
 \quad
 b = \lfloor k / |\mathcal{P}| \rfloor
+\end{gathered}
 $$
 
 - E.g., $\Lambda(0) = (0, 0)$, label of $M_{\text{calgary1}, 50}$; $\Lambda(1) = (1, 0)$, label of $M_{\text{cau-kiel1}, 50}$.
@@ -206,6 +211,7 @@ Content of `data/`: one HDF5 file, `data/spe11b.h5`, all unscaled. `data/spe11b.
 
 
 Content of the HDF5 file:
+
 | Dataset | Shape | Type | Content |
 |---|---|---|---|
 | `maps` | $(K, 120, 840)$ | float32 | $M$, in kg |
@@ -229,18 +235,20 @@ Redundancy:
 - Required: a function, $g$, from a training index to a scaled training sample:
 
 $$
-g : \{0, \dots, N-1\} \to \left( \mathbb{R}^{120 \times 840} \times \mathbb{R}^{120 \times 840} \right) \times \mathbb{R},
-\qquad
+\begin{gathered}
+g : \{0, \dots, N-1\} \to \left( \mathbb{R}^{120 \times 840} \times \mathbb{R}^{120 \times 840} \right) \times \mathbb{R}, \\
 g : i \mapsto \left( \left( \mathcal{S}_M(M_{\lambda_i}), \mathcal{S}_M(M_{\tilde\lambda_i}) \right), \mathcal{S}_d\left( d(M_{\lambda_i}, M_{\tilde\lambda_i}) \right) \right)
+\end{gathered}
 $$
 
 
 - $\phi$: from a label pair to a training sample, with $M_{\lambda} = M_{p,t}$ for $\lambda = (a, b)$, where $a$, $b$ are the indices of $p$, $t$:
 
 $$
-\phi : \left( \{0, \dots, |\mathcal{P}|-1\} \times \{0, \dots, |\mathcal{T}|-1\} \right)^2 \to \left( \mathbb{R}^{120 \times 840} \times \mathbb{R}^{120 \times 840} \right) \times \mathbb{R}_{\ge 0},
-\qquad
+\begin{gathered}
+\phi : \left( \{0, \dots, |\mathcal{P}|-1\} \times \{0, \dots, |\mathcal{T}|-1\} \right)^2 \to \left( \mathbb{R}^{120 \times 840} \times \mathbb{R}^{120 \times 840} \right) \times \mathbb{R}_{\ge 0}, \\
 \phi : (\lambda, \tilde\lambda) \mapsto \left( (M_{\lambda}, M_{\tilde\lambda}), d(M_{\lambda}, M_{\tilde\lambda}) \right)
+\end{gathered}
 $$
 
 - We have:
@@ -274,5 +282,5 @@ The functions $\pi$, $\Lambda$, $\phi$, $\mathcal{S}_M$, $\mathcal{S}_d$ composi
 
 
 ## Utilities
-- `find_spe11b_data_root(start="spe11b")` in `src/ml4gcs/data/discovery.py`: returns the folder that directly contains the participant folders.
+- `find_spe11b_data_root(start="spe11b")` in `src/spe11_wasserstein/discovery.py`: returns the folder that directly contains the participant folders.
 

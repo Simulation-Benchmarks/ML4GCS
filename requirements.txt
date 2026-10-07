@@ -11,3 +11,4 @@ jax[cuda13] # JAX with CUDA 13 GPU support
 tensorflow
 pandas
 optax
+h5py
