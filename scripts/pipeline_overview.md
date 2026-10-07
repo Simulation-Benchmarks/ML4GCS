@@ -1,10 +1,10 @@
 ## Assumptions
 
-- Python with common libraries (NumPy, JAX, optax, pandas).
+- Python with common libraries (NumPy, JAX, PyTorch, optax, pandas).
 - Memory is limited: each map is stored once, instead of the common practice of storing every input pair explicitly. This requires a preprocessing step and data-management utilities.
 - A pair is an index pair, never a copy of two maps.
 - `spe11b/` is the raw data, never modified.
-- Participants keep their names (e.g. `calgary1`) instead of being replaced by indices. The same holds for years (e.g. 50).
+- Participants and years are represented by integer indices (see Indexing), not by names (e.g. `calgary1`) or year values (e.g. 50), so that the whole training can be jitted (for JAX users).
 
 
 ## Learning task
@@ -34,10 +34,15 @@ Each map depends on a participant $p$ and a year $t$. For clarity, we denote it 
 
 ## Datasets
 
-Let $\mathcal{D}_{\text{train}}$ be the training dataset, $\mathcal{D}_{\text{test}}$ the test dataset and $\mathcal{D}_{\text{val}}$ the validation dataset.
+Let $\mathcal{D} = \{ \text{datum}_q : q = 0, \dots, |\mathcal{D}|-1 \}$ be the full dataset: $\text{datum}_q$ is the sample with datum index $q$.
 
-- Each dataset is a set of samples $\left( (M, \tilde M), d(M, \tilde M) \right)$: two maps and the distance between them.
-- $N = |\mathcal{D}_{\text{train}}|$: number of training samples.
+- Each sample is $\left( (M, \tilde M), d(M, \tilde M) \right)$: two maps and the distance between them.
+- One sample per ordered pair of maps, including $\tilde M = M$: $(M, \tilde M)$ and $(\tilde M, M)$ are different samples.
+- $|\mathcal{D}| = 680^2 = 462{,}400$: 680 maps, from 34 participants and 20 years.
+
+The split is a random partition of the datum indices $q$, in the ratio $0.7 : 0.15 : 0.15$. The three parts select the samples of the training dataset $\mathcal{D}_{\text{train}}$, the validation dataset $\mathcal{D}_{\text{val}}$ and the test dataset $\mathcal{D}_{\text{test}}$.
+
+- $N = |\mathcal{D}_{\text{train}}| = 323{,}680$: number of training samples. $|\mathcal{D}_{\text{val}}| = |\mathcal{D}_{\text{test}}| = 69{,}360$.
 - $i \in \{0, \dots, N-1\}$: training index, identifies one sample of $\mathcal{D}_{\text{train}}$.
 
 
@@ -45,7 +50,7 @@ Let $\mathcal{D}_{\text{train}}$ be the training dataset, $\mathcal{D}_{\text{te
 ## Scaling
 - Scalings: $\mathcal{S}_M$ for maps, $\mathcal{S}_d$ for distances. Both invertible.
 
-Example, standardization, as in `scripts/case_3_cnn_oop/data/dataset.py`:
+For example, standardization (as in `scripts/case_3_cnn_oop/data/dataset.py`):
 
 $$
 \mathcal{S}_M(M) = \frac{M - \mu_M}{\sigma_M + \varepsilon},
@@ -72,12 +77,12 @@ Let $g(i)$ ($g$ as in "getitem") be the scaled training sample identified by the
 - $n = 0, 1, \ldots$: training iteration index (one iteration corresponds to one weight update).
 - $B$: batch size.
 - $J = \lceil N / B \rceil$: number of minibatches per epoch. The last one has $N - (J-1) \, B \le B$ samples.
-- $I = (I_0, \dots, I_{N-1})$: training index sequence, initially $(0, \dots, N-1)$.
-- $\text{reshuffle}(I)$: the entries of $I$ in a uniformly random order.
+- $\mathcal{I} = (I_0, \dots, I_{N-1})$: training index sequence, initially $(0, \dots, N-1)$.
+- $\text{reshuffle}(\mathcal{I})$: the entries of $\mathcal{I}$ in a uniformly random order.
 
 Each epoch:
 
-1. If the user enables reshuffle: $I \leftarrow \text{reshuffle}(I)$.
+1. If the user enables reshuffle: $\mathcal{I} \leftarrow \text{reshuffle}(\mathcal{I})$.
 2. For $j = 0, \dots, J-1$: run iteration $n$ with $\mathcal{B}^{(n)}$ below, then $n \leftarrow n + 1$.
 
 $$
@@ -89,8 +94,9 @@ Each epoch uses every training index exactly once.
 
 
 ## Typical training
-
-- $\lambda_i = (p_i, t_i)$, $\tilde\lambda_i = (\tilde p_i, \tilde t_i)$: participant and year of the two maps of training sample $i$.
+- Training index: $i \in \{0, \dots, N-1\}$.
+- $\lambda = (a, b)$: label of a map; $a$, $b$ are the participant and year indices (see Indexing). In particular, 
+ $\lambda_i = (a_i, b_i)$, $\tilde\lambda_i = (\tilde a_i, \tilde b_i)$: labels of the two maps of training sample $i$.
 - Training pairs: $(M_{\lambda_i}, M_{\tilde\lambda_i})$, $i = 0, \dots, N-1$.
 - Input: $x_i = \left( \mathcal{S}_M(M_{\lambda_i}), \mathcal{S}_M(M_{\tilde\lambda_i}) \right)$.
 - Target: $y_i = \mathcal{S}_d\left( d(M_{\lambda_i}, M_{\tilde\lambda_i}) \right)$.
@@ -108,7 +114,7 @@ Update at iteration $n$, with minibatch $\mathcal{B}^{(n)}$:
 $$
 \theta^{(n+1)} = \theta^{(n)} + \Delta\theta^{(n)},
 \qquad
-\Delta\theta^{(n)} = G\left(\theta^{(n)}, \nabla_\theta \mathcal{L}_{\mathcal{B}^{(n)}}(\theta^{(n)}), s^{(n)}\right)
+\left( \Delta\theta^{(n)}, s^{(n+1)} \right) = G\left(\theta^{(n)}, \nabla_\theta \mathcal{L}_{\mathcal{B}^{(n)}}(\theta^{(n)}), s^{(n)}\right)
 $$
 
 - $G$: optimizer rule.
@@ -119,7 +125,7 @@ $$
 
 
 
-## Where $M$ and $d(M, \tilde M)$ are stored
+## Where $M$ and $d(M, \tilde M)$ are currently stored
 
 - **Maps**: $M_{p,t}$ is the column `tmCO2 [kg]` of the file
   `spe11b/<p>/spe11b_spatial_map_<t>y.csv`, for $t \in \{0, 5, \dots, 1000\}$.
@@ -140,11 +146,12 @@ $$
 - $a \in \{0, \dots, |\mathcal{P}|-1\}$: participant index, the position of $p$ in $\mathcal{P}$.
 - $\mathcal{T} = \{50, 100, \dots, 1000\}$: the years with distances, in increasing order.
 - $b \in \{0, \dots, |\mathcal{T}|-1\}$: year index, the position of $t$ in $\mathcal{T}$.
+- $a \mapsto p$ and $b \mapsto t$ are bijections, stored as two arrays of the HDF5 file: $p = \texttt{participants}[a]$, $t = \texttt{years}[b]$. Inverses: a dictionary, e.g. `{p: a for a, p in enumerate(participants)}`.
 - $K = |\mathcal{P}| \cdot |\mathcal{T}| = 680$.
 - $k \in \{0, \dots, K-1\}$: unrolled index, one per map; the participant index moves faster (or the opposite, with $\Lambda$ and $\Lambda^{-1}$ below changed accordingly).
 
 
-**From training index to coupled unrolled index:**
+**From training index to pair of unrolled indices:**
 
 
 $$
@@ -157,20 +164,32 @@ $$
 
 **From unrolled index to label:**
 
-- $\lambda = (p, t) \in \mathcal{P} \times \mathcal{T}$: label of a map.
 
 $$
-\Lambda : \{0, \dots, K-1\} \to \mathcal{P} \times \mathcal{T},
+\Lambda : \{0, \dots, K-1\} \to \{0, \dots, |\mathcal{P}|-1\} \times \{0, \dots, |\mathcal{T}|-1\},
 \qquad
-\Lambda(k) = (p, t),
+\lambda = \Lambda(k) = (a, b),
 \quad \text{with} \quad
 a = k \bmod |\mathcal{P}|,
 \quad
 b = \lfloor k / |\mathcal{P}| \rfloor
 $$
 
-- E.g., $\Lambda(k) = (\texttt{participant}[k], \texttt{year}[k])$; $\Lambda(0) = (\texttt{calgary1}, 50)$, $\Lambda(1) = (\texttt{cau-kiel1}, 50)$. (This uses the assumption that names, not indices, are kept.)
-- Inverse, from label to unrolled index: $\Lambda^{-1}(p, t) = |\mathcal{P}| \, b + a$. Preprocessing uses it to fill `distances` from the CSV keys.
+- E.g., $\Lambda(0) = (0, 0)$, label of $M_{\text{calgary1}, 50}$; $\Lambda(1) = (1, 0)$, label of $M_{\text{cau-kiel1}, 50}$.
+- Inverse, from label to unrolled index: $\Lambda^{-1}(a, b) = |\mathcal{P}| \, b + a$. Preprocessing uses it to fill `distances` from the CSV keys.
+
+
+**Schematically:**
+
+$$
+\begin{array}{cccccccccccccl}
+ & & & & & & i & & & & & & & \qquad \text{training index} \\
+ & & & & \swarrow & & & & \searrow & & & & & \qquad \pi \\
+ & & k_i & & & & & & & & \tilde k_i & & & \qquad \text{unrolled indices} \\
+ & \swarrow & & \searrow & & & & & & \swarrow & & \searrow & & \qquad \Lambda \\
+ a_i & & & & b_i & & & & \tilde a_i & & & & \tilde b_i & \qquad \text{participant and year indices}
+\end{array}
+$$
 
 
 
@@ -190,22 +209,22 @@ Content of the HDF5 file:
 | Dataset | Shape | Type | Content |
 |---|---|---|---|
 | `maps` | $(K, 120, 840)$ | float32 | $M$, in kg |
-| `distances` | $(K, K)$ | float64 | $d(M, \tilde M)$, in kg·m |
-| `participant` | $(K,)$ | string | participant $p \in \mathcal{P}$ of each map, e.g. `calgary1` |
-| `year` | $(K,)$ | int | year $t \in \mathcal{T}$ of each map, e.g. 50 |
+| `distances` | $(K, K)$ | float32 | $d(M, \tilde M)$, in kg·m |
+| `participants` | $(\lvert\mathcal{P}\rvert,)$ | string | $\mathcal{P}$, e.g. `participants[0]` = `calgary1` |
+| `years` | $(\lvert\mathcal{T}\rvert,)$ | int | $\mathcal{T}$, e.g. `years[0]` = 50 |
 
 
 
 Redundancy:
  
-- `distances` is symmetric, and labels repeat. Estimated 2 MB in total: accepted.
+- `distances` is symmetric. Estimated 1 MB in total: accepted.
 
 
 
 **Data management utilities:**
 
 - ML needs fast minibatch creation.
-- The HDF5 file is kept in memory.
+- The arrays of the HDF5 file are kept in GPU memory (≈ 276 MB).
 - Data is picked on the fly, when a minibatch is built.
 - Required: a function, $g$, from a training index to a scaled training sample:
 
@@ -216,10 +235,10 @@ g : i \mapsto \left( \left( \mathcal{S}_M(M_{\lambda_i}), \mathcal{S}_M(M_{\tild
 $$
 
 
-- $\phi$: from a label pair to a training sample, with $M_{\lambda} = M_{p,t}$ for $\lambda = (p, t)$:
+- $\phi$: from a label pair to a training sample, with $M_{\lambda} = M_{p,t}$ for $\lambda = (a, b)$, where $a$, $b$ are the indices of $p$, $t$:
 
 $$
-\phi : (\mathcal{P} \times \mathcal{T})^2 \to \left( \mathbb{R}^{120 \times 840} \times \mathbb{R}^{120 \times 840} \right) \times \mathbb{R}_{\ge 0},
+\phi : \left( \{0, \dots, |\mathcal{P}|-1\} \times \{0, \dots, |\mathcal{T}|-1\} \right)^2 \to \left( \mathbb{R}^{120 \times 840} \times \mathbb{R}^{120 \times 840} \right) \times \mathbb{R}_{\ge 0},
 \qquad
 \phi : (\lambda, \tilde\lambda) \mapsto \left( (M_{\lambda}, M_{\tilde\lambda}), d(M_{\lambda}, M_{\tilde\lambda}) \right)
 $$
@@ -227,7 +246,7 @@ $$
 - We have:
 
 $$
-g = (\mathcal{S}_M \times \mathcal{S}_M \times \mathcal{S}_d) \circ \phi \circ (\Lambda \times \Lambda)  \circ \pi,
+g = ((\mathcal{S}_M \times \mathcal{S}_M) \times \mathcal{S}_d) \circ \phi \circ (\Lambda \times \Lambda)  \circ \pi
 $$
 
 
@@ -235,12 +254,25 @@ $$
 
 The functions $\pi$, $\Lambda$, $\phi$, $\mathcal{S}_M$, $\mathcal{S}_d$ composing $g$  are provided in `src/spe11_wasserstein/*.py`.
 
+- One dataset instance per split ($\mathcal{D}_{\text{train}}$, $\mathcal{D}_{\text{val}}$, $\mathcal{D}_{\text{test}}$): same arrays in memory, a separate $\pi$, the same $\mathcal{S}_M$, $\mathcal{S}_d$ as $\mathcal{D}_{\text{train}}$.
+
 
 
 
 ## PyTorch users
 - `__getitem__` corresponds to $g$: inside `__getitem__`, call the functions that compose $g$.
+- `__len__` returns $N$; `DataLoader` needs it.
+- `DataLoader(dataset, batch_size=B, shuffle=True)` implements the Minibatching section: `shuffle` enables the reshuffle; the last minibatch has $N - (J-1) \, B$ samples (default `drop_last=False`).
+- Keep the default `num_workers=0`: the arrays are CUDA tensors, which do not work reliably with worker processes.
+
 
 ## JAX users
-- The dataset is typically custom, so implementing $g$ is even more straightforward.
+- The dataset is typically custom, so implementing $g$ is even simpler.
+- No built-in data loader: write the epoch loop of the Minibatching section.
+- $g$ uses integer indices only: jit it together with the training step, with `maps`, `distances` and the pairs $\pi(i)$ on the GPU.
+
+
+
+## Utilities
+- `find_spe11b_data_root(start="spe11b")` in `src/ml4gcs/data/discovery.py`: returns the folder that directly contains the participant folders.
 
