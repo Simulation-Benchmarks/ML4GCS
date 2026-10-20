@@ -1,3 +1,4 @@
+from pdb import set_trace as st
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from typing import Sequence
@@ -52,6 +53,7 @@ def initialize_model(
 ) -> CNNParameters:
     """
     Initialize parameters of a convolutional neural network for image-pair regression.
+    From "Delving Deep into Rectifiers: Surpassing Human-Level Performance on ImageNet Classification" 10.1109/iccv.2015.123
 
     Args:
         input_channels: Number of input image channels.
