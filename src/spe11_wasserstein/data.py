@@ -1,19 +1,42 @@
 """SPE11B data management (see scripts/pipeline_overview.md).
 
-g = ((S_M × S_M) × S_d) ∘ φ ∘ (Λ × Λ) ∘ π:
+A sample is two CO2 maps and the Wasserstein distance between them. There is
+one sample per ordered pair of maps. To save memory, each map is stored once,
+and a split stores only the indices of the two maps of each sample.
 
-- `pi`: π, training index -> pair of unrolled indices.
-- `Lambda`, `Lambda_inv`: Λ, Λ⁻¹, unrolled index <-> label (a, b).
-- `phi`: φ, label pair -> training sample.
-- `S`, `S_inv`: standardization and its inverse.
-- `Standardization`: S_M, S_d, i.e. S with fixed μ, σ.
-- `Dataset.__getitem__`: g.
+`make_datasets` reads data/spe11b.h5 (written by preprocess.py) and splits the
+samples at random into D_train, D_val, D_test.
+
+`D_train[i]` (`Dataset.__getitem__`) builds g(i), the scaled sample i, on the fly:
+
+    g = ((S_M × S_M) × S_d) ∘ φ ∘ (Λ × Λ) ∘ π
+
+The steps of g, from right to left:
+
+1. π (`pi`) selects the two maps of sample i: i -> unrolled indices (k_i, k̃_i).
+2. Λ (`Lambda`) labels each map by participant and year: k -> λ = (a, b).
+   Λ⁻¹ (`Lambda_inv`) is the inverse.
+3. φ (`phi`) reads the two maps and their distance from `maps` and `distances`:
+   (λ, λ̃) -> ((M_λ, M_λ̃), d(M_λ, M_λ̃)).
+4. S_M, S_d (`Standardization`) standardize the maps (network input) and the
+   distance (network target).
+
+Variables:
+
+- i: training index, identifies one sample of a split.
+- k: unrolled index, one per map.
+- λ = (a, b): label of a map; a, b: participant and year indices.
+- M_λ: CO2 map with label λ, shape (120, 840), in kg.
+- d(M_λ, M_λ̃): Wasserstein distance between M_λ and M_λ̃, in kg·m.
+- S(x) = (x - μ) / (σ + ε), ε = 1e-8: standardization (`S`, inverse `S_inv`).
+- S_M: S with μ_M, σ_M, the mean and standard deviation of all entries of all maps.
+- S_d: S with μ_d, σ_d, the mean and standard deviation of the distances in D_train.
 
 π, Λ, Λ⁻¹, φ, S_M, S_d and g accept NumPy, JAX and PyTorch arrays.
 
-`Minibatches`: the Minibatching section, for JAX; PyTorch users use DataLoader.
-
-The HDF5 file is written by preprocess.py.
+`Minibatches`, for JAX users (Minibatching section): iterating over it gives one
+epoch of minibatches, as arrays of training indices. PyTorch users use
+DataLoader instead.
 """
 
 from __future__ import annotations
