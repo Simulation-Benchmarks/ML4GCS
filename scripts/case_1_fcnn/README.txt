@@ -6,7 +6,7 @@ To execute the full test pipeline, run:
 
 This script will:
 
-- Process and prepare the dataset
+- Build data/spe11b.h5 from spe11b/, if missing (run once)
 - Train the neural network
 - Test and evaluate the trained model
 

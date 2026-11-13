@@ -35,12 +35,12 @@ class Trainer:
         all_preds = []
         all_targets = []
     
-        for x, y in self.train_loader:
-            x = x.to(self.device)
+        for (M, M_tilde), y in self.train_loader:
+            x = torch.stack([M, M_tilde], dim=1).to(self.device)  # 2 channels: M, M̃
             y = y.to(self.device)
     
             self.optimizer.zero_grad()
-            pred = self.model(x)
+            pred = self.model(x).squeeze(1)  # (B, 1) -> (B,), the shape of y
     
             loss = self.loss_func(pred, y)
             loss.backward()
@@ -64,11 +64,11 @@ class Trainer:
         all_targets = []
 
         with torch.no_grad():
-            for x, y in self.val_loader:
-                x = x.to(self.device)
+            for (M, M_tilde), y in self.val_loader:
+                x = torch.stack([M, M_tilde], dim=1).to(self.device)
                 y = y.to(self.device)
 
-                pred = self.model(x)
+                pred = self.model(x).squeeze(1)
                 loss = self.loss_func(pred, y)
 
                 total_loss += loss.item()
